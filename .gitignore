@@ -1,0 +1,4 @@
+/.venv
+/hy3dgen
+/models
+*.pyc
