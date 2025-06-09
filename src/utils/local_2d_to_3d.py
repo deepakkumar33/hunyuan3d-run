@@ -13,25 +13,8 @@ from hy3dgen.shapegen.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 class Local2DTo3DConverter:
     """
     Handles loading and inference for a local Hunyuan3D model.
-
-    Parameters
-    ----------
-    model_dir : str
-        Path to the directory containing the model files.
-    logger : logging.Logger, optional
-        Logger instance for logging events and warnings.
     """
     def __init__(self, model_dir, logger=None):
-        """
-        Initialize the Local2DTo3DConverter.
-
-        Parameters
-        ----------
-        model_dir : str
-            Path to the directory containing the model files.
-        logger : logging.Logger, optional
-            Logger instance for logging events and warnings.
-        """
         self.logger = logger or logging.getLogger(__name__)
         self.pipeline = None
         self.model_dir = model_dir
@@ -39,10 +22,6 @@ class Local2DTo3DConverter:
         self._load_pipeline()
 
     def _load_pipeline(self):
-        """
-        Attempt to load the Hunyuan3D pipeline from the local model directory.
-        If loading fails, enable dummy mode.
-        """
         try:
             abs_model_dir = os.path.abspath(self.model_dir)
             subfolder = "hunyuan3d-dit-v2-0"
@@ -60,38 +39,27 @@ class Local2DTo3DConverter:
                 return
 
             self.logger.info(f"Loading Hunyuan3D model from {model_path}")
-            try:
-                self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-                    abs_model_dir,
-                    local_files_only=True,
-                    torch_dtype=torch.float32,  # Use FP32 for CPU
-                    subfolder=subfolder,
-                    device_map="cpu"  # Explicitly use CPU
-                )
-                self.logger.info("Hunyuan3D model loaded successfully on CPU")
-            except Exception as e:
-                self.logger.error(f"Failed to load model: {e}")
-                self.dummy_mode = True
+
+            use_gpu = torch.cuda.is_available()
+            device_map = "auto" if use_gpu else "cpu"
+            dtype = torch.float16 if use_gpu else torch.float32
+
+            self.logger.info(f"🔧 Using device: {'GPU' if use_gpu else 'CPU'}")
+
+            self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+                abs_model_dir,
+                local_files_only=True,
+                torch_dtype=dtype,
+                subfolder=subfolder,
+                device_map=device_map
+            )
+            self.logger.info(f"Hunyuan3D model loaded successfully on {'GPU' if use_gpu else 'CPU'}")
 
         except Exception as e:
             self.logger.error(f"Unexpected error loading model: {e}")
             self.dummy_mode = True
 
     def convert(self, image_path):
-        """
-        Convert a 2D image to a 3D mesh using the local pipeline.
-        If in dummy mode or conversion fails, return a dummy mesh.
-
-        Parameters
-        ----------
-        image_path : str
-            Path to the input image file.
-
-        Returns
-        -------
-        mesh : trimesh.Trimesh
-            The generated 3D mesh object.
-        """
         if self.dummy_mode or self.pipeline is None:
             self.logger.warning("Using dummy mesh due to model loading failure or dummy mode.")
             vertices = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
