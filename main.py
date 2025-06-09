@@ -8,6 +8,8 @@ from src.utils.configuration import ConfigLoader
 from src.api.convert_api import ConvertAPI
 from src.api.config_api import ConfigAPI
 from src.logger.logger import Logger
+from flask import Flask, send_from_directory
+import os
 
 # Global app instance (Flask needs this when reloading)
 app = Flask(__name__)
@@ -24,7 +26,7 @@ app.register_blueprint(config_api.api, url_prefix='/api')
 
 @app.route('/')
 def home():
-    return '✅ Hunyuan3D API is running. Use /api/convert to access the converter.'
+    return send_from_directory('static', 'index.html')
 
 # Debug route list
 print("🔍 Registered routes:")
