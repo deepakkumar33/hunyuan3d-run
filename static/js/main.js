@@ -2,7 +2,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   console.log('main.js loaded at', new Date().toISOString());
 
-  const API = ''; // use relative
+  const API = ''; // relative paths, e.g. POST to /api/convert
 
   // NAVIGATION
   const links   = document.querySelectorAll('.app-nav a');
@@ -77,7 +77,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // UPLOAD & CONVERT
   upload.addEventListener('click', async ()=>{
     if (!files.length) return;
-    links[1].click(); // go to process
+    // switch to Process tab
+    links[1].click();
 
     const form = new FormData();
     files.forEach(f=> form.append('images', f));
@@ -91,11 +92,18 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(err.error||`Status ${res.status}`);
       }
       const json = await res.json();
-      if (!json.model_url) throw new Error('no model_url');
-      const viewer = await loadViewer();
+      if (!json.model_url) throw new Error('no model_url returned');
+      console.log('Received model_url:', json.model_url);
+      // Load viewer and model
+      const viewer = await import('/static/js/threejs-viewer.js');
+      // viewer module exports loadModel
       viewer.loadModel(json.model_url);
+
+      // After small delay, switch to View tab
       setTimeout(()=> links[2].click(), 500);
-      setupExport({ obj:json.model_url.replace('.glb','.obj') });
+
+      // Setup export buttons. For now, only OBJ:
+      setupExport({ obj: json.model_url.replace('.glb','.obj') });
     }
     catch(e){
       console.error(e);
@@ -135,26 +143,27 @@ document.addEventListener('DOMContentLoaded', () => {
   function setupExport(links){
     document.querySelectorAll('.export-card').forEach(card=>{
       const fmt = card.dataset.format;
-      card.querySelector('.btn-export').addEventListener('click', ()=>{
-        if (links[fmt]) window.location.href=links[fmt];
-        else alert(`No ${fmt}`);
+      const btn = card.querySelector('.btn-export');
+      btn.addEventListener('click', ()=>{
+        if (links[fmt]) {
+          // Navigate to download URL
+          window.location.href = links[fmt];
+        } else {
+          alert(`No ${fmt} available`);
+        }
       });
     });
     document.getElementById('back-to-view-btn')
-      .addEventListener('click', ()=> links[2].click());
+      .addEventListener('click', ()=> links[2] && links[2].click && links[2].click());
     document.getElementById('new-project-btn')
       .addEventListener('click', ()=> {
-        if(confirm('New project?')){
+        if (confirm('Start new project?')) {
           files=[]; updateList(); updateUpload();
           links[0].click();
           document.getElementById('model-viewer').innerHTML = `
             <div class="viewer-empty-state"><i class="fas fa-cube"></i><p>3D model will appear here</p></div>`;
         }
       });
-  }
-
-  async function loadViewer(){
-    return await import('/static/js/threejs-viewer.js');
   }
 
   console.log('main.js ready');
