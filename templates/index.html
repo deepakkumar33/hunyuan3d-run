@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>JewelryMesh - 3D Jewelry Mesh Generator</title>
 
-    <!-- Import map for Three.js -->
+    <!-- Import map so that bare imports from 'three' resolve to the CDN module -->
     <script type="importmap">
     {
         "imports": {
@@ -21,7 +21,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"/>
 
     <style>
-        /* Ensure browse button is clickable */
+        /* Ensure browse button is clickable over the drop zone */
         #browse-btn {
             pointer-events: auto !important;
             opacity: 1 !important;
