@@ -1,53 +1,41 @@
 """
-Flask application wrapper class for the 2D to 3D Model Converter API backend.
+Flask application wrapper for the 2D→3D Model Converter,
+serving both API endpoints and your frontend from /static.
 """
-__all__ = ['Model2DTo3DApp']
 
-from flask import Flask
+import os
+from flask import Flask, send_from_directory
 from src.utils.configuration import ConfigLoader
 from src.api.convert_api import ConvertAPI
 from src.api.config_api import ConfigAPI
 from src.logger.logger import Logger
-from flask import Flask, send_from_directory
-import os
 
-# Global app instance (Flask needs this when reloading)
-app = Flask(__name__)
+# Create Flask app
+app = Flask(__name__, static_folder='static', static_url_path='')
+
+# Initialize logger
 logger = Logger(__name__).get_logger()
 
-# Initialize config and APIs
+# Load configuration & initialize APIs
 config_loader = ConfigLoader()
 convert_api = ConvertAPI(logger, config_loader)
 config_api = ConfigAPI(config_loader)
 
-# Register routes
+# Register API blueprints under /api
 app.register_blueprint(convert_api.api, url_prefix='/api')
-app.register_blueprint(config_api.api, url_prefix='/api')
+app.register_blueprint(config_api.api,  url_prefix='/api')
 
+# Serve your frontend's index.html at /
 @app.route('/')
-def home():
-    return send_from_directory('static', 'index.html')
+def serve_frontend():
+    return send_from_directory(app.static_folder, 'index.html')
 
-# Debug route list
-print("🔍 Registered routes:")
-print(app.url_map)
+# Serve all other static assets under /<path>
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(app.static_folder, filename)
 
-
-class Model2DTo3DApp:
-    """
-    Flask application wrapper class for the 2D to 3D Model Converter API backend.
-    """
-
-    def __init__(self):
-        self.logger = logger
-        self.app = app
-
-    def run(self, **kwargs):
-        self.logger.info('Starting 2D to 3D Model Converter Flask application...')
-        self.app.run(**kwargs)
-
-
-# 👇 Will only run in main container (not when Flask auto reloads as a module)
 if __name__ == '__main__':
-    app_instance = Model2DTo3DApp()
-    app_instance.run(debug=True, host='0.0.0.0', port=5000)
+    logger.info("🔍 Registered routes:\n%s", app.url_map)
+    logger.info("Starting Flask on 0.0.0.0:5000…")
+    app.run(debug=True, host='0.0.0.0', port=5000)
