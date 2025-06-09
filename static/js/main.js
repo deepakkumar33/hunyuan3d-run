@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   browse.addEventListener('click', ()=> fi.click());
   fi.addEventListener('change', ()=> handleFiles(fi.files));
   clear.addEventListener('click', ()=>{
-    files = []; updateList(); updateUpload();
+    files=[]; updateList(); updateUpload();
   });
 
   function handleFiles(f) {
@@ -45,7 +45,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateList();
     updateUpload();
   }
-
   function updateList() {
     if (!files.length) {
       list.innerHTML = `<div class="empty-state"><i class="fas fa-images"></i><p>No files selected</p></div>`;
@@ -71,7 +70,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
-
   function updateUpload() {
     upload.disabled = files.length===0;
   }
@@ -145,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('back-to-view-btn')
       .addEventListener('click', ()=> links[2].click());
     document.getElementById('new-project-btn')
-      .addEventListener('click', ()=>{
+      .addEventListener('click', ()=> {
         if(confirm('New project?')){
           files=[]; updateList(); updateUpload();
           links[0].click();
