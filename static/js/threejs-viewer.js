@@ -1,5 +1,5 @@
 // static/js/threejs-viewer.js
-import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+import * as THREE from 'three';  // now resolved by import map
 import { OrbitControls } from 'https://unpkg.com/three@0.150.1/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader }   from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
 
