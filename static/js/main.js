@@ -1,5 +1,8 @@
+// main.js
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM fully loaded at:', new Date().toISOString());
+
+    const API_BASE_URL = "https://0333-103-196-86-110.ngrok-free.app";
 
     // Navigation
     try {
@@ -44,7 +47,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const fileList = document.getElementById('file-list');
         const uploadBtn = document.getElementById('upload-btn');
         const clearBtn = document.getElementById('clear-btn');
-        
+
         console.log('Checking DOM elements:');
         console.log('dropZone:', !!dropZone);
         console.log('fileInput:', !!fileInput);
@@ -187,18 +190,6 @@ document.addEventListener('DOMContentLoaded', function() {
             updateUploadButton();
         });
 
-        // Dynamically load threejs-viewer.js only when needed
-        async function loadThreeJSViewer() {
-            try {
-                const module = await import('/static/js/threejs-viewer.js');
-                return module;
-            } catch (error) {
-                console.error('Failed to load threejs-viewer.js:', error);
-                alert('Error loading 3D viewer. Check the console.');
-                return null;
-            }
-        }
-
         // Upload and process
         uploadBtn.addEventListener('click', async () => {
             if (files.length === 0) return;
@@ -207,14 +198,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const formData = new FormData();
             files.forEach(file => {
-                formData.append('images', file); // Changed to 'images' to match Flask
+                formData.append('images', file);
             });
 
             try {
                 startProcessingAnimation();
 
                 console.log('Sending upload request to /upload_jewelry');
-                const response = await fetch('http://localhost:5000/upload_jewelry', {
+                const response = await fetch(`${API_BASE_URL}/upload_jewelry`, {
                     method: 'POST',
                     body: formData
                 });
@@ -230,59 +221,53 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.model_url) {
                     const threeJSViewer = await loadThreeJSViewer();
                     if (threeJSViewer) {
-                        threeJSViewer.loadModel(data.model_url, null); // No sessionId needed for single model
+                        threeJSViewer.loadModel(data.model_url, null);
                         setTimeout(() => {
                             document.querySelector('.app-nav li:nth-child(3) a').click();
                         }, 1000);
-                        setupExportButtons(null, { obj: data.model_url.replace('.glb', '.obj') }); // Assume .obj for simplicity
+                        setupExportButtons(null, { obj: data.model_url.replace('.glb', '.obj') });
                     }
                 } else {
                     throw new Error('No model URL returned from upload');
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert(`Error: ${error.message}. Please check the server logs and ensure the server is running on http://localhost:5000.`);
+                alert(`Error: ${error.message}. Please check the server logs and ensure the server is running on ${API_BASE_URL}.`);
                 document.querySelector('.app-nav li:nth-child(1) a').click();
                 completeProcessingAnimation();
             }
         });
 
-        function checkStatus(sessionId) {
-            // Simplified status check since we're using a single request
-            const statusElement = document.querySelector('.progress-text');
+        async function loadThreeJSViewer() {
+            try {
+                const module = await import('/static/js/threejs-viewer.js');
+                return module;
+            } catch (error) {
+                console.error('Failed to load threejs-viewer.js:', error);
+                alert('Error loading 3D viewer. Check the console.');
+                return null;
+            }
+        }
+
+        function completeProcessingAnimation() {
+            const progressText = document.querySelector('.progress-text');
             const progressPercent = document.querySelector('.progress-percent');
             const progressFill = document.querySelector('.progress-fill');
             const statusBadges = document.querySelectorAll('.status-badge');
+            const intervalId = document.querySelector('.progress-container').dataset.intervalId;
 
-            let progress = 0;
-            const interval = setInterval(() => {
-                progress += Math.random() * 10;
-                if (progress > 100) progress = 100;
+            if (intervalId) {
+                clearInterval(parseInt(intervalId));
+            }
 
-                progressFill.style.width = `${progress}%`;
-                progressPercent.textContent = `${Math.floor(progress)}%`;
+            progressFill.style.width = '100%';
+            progressPercent.textContent = '100%';
+            progressText.textContent = 'Processing complete!';
 
-                if (progress < 30) {
-                    statusElement.textContent = 'Analyzing images...';
-                    statusBadges[0].classList.add('complete');
-                    statusBadges[1].classList.add('pending');
-                } else if (progress < 60) {
-                    statusElement.textContent = 'Generating 3D point cloud...';
-                    statusBadges[1].classList.add('complete');
-                    statusBadges[2].classList.add('pending');
-                } else if (progress < 90) {
-                    statusElement.textContent = 'Creating surface mesh...';
-                    statusBadges[2].classList.add('complete');
-                    statusBadges[3].classList.add('pending');
-                } else {
-                    statusElement.textContent = 'Finalizing model...';
-                }
-
-                if (progress === 100) {
-                    clearInterval(interval);
-                    completeProcessingAnimation();
-                }
-            }, 3000);
+            statusBadges.forEach(badge => {
+                badge.classList.remove('pending');
+                badge.classList.add('complete');
+            });
         }
 
         function startProcessingAnimation() {
@@ -321,27 +306,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 300);
         }
 
-        function completeProcessingAnimation() {
-            const progressText = document.querySelector('.progress-text');
-            const progressPercent = document.querySelector('.progress-percent');
-            const progressFill = document.querySelector('.progress-fill');
-            const statusBadges = document.querySelectorAll('.status-badge');
-            const intervalId = document.querySelector('.progress-container').dataset.intervalId;
-
-            if (intervalId) {
-                clearInterval(parseInt(intervalId));
-            }
-
-            progressFill.style.width = '100%';
-            progressPercent.textContent = '100%';
-            progressText.textContent = 'Processing complete!';
-
-            statusBadges.forEach(badge => {
-                badge.classList.remove('pending');
-                badge.classList.add('complete');
-            });
-        }
-
         function setupExportButtons(sessionId, downloadLinks) {
             const exportCards = document.querySelectorAll('.export-card');
 
@@ -351,7 +315,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 btn.addEventListener('click', () => {
                     if (downloadLinks[format]) {
-                        window.location.href = `http://localhost:5000${downloadLinks[format]}`;
+                        window.location.href = `${API_BASE_URL}${downloadLinks[format]}`;
                     } else {
                         alert(`File format ${format} not available`);
                     }
