@@ -103,7 +103,8 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(()=> links[2].click(), 500);
 
       // Setup export buttons. For now, only OBJ:
-      setupExport({ obj: json.model_url.replace('.glb','.obj') });
+      setupExport({ obj: json.model_url });
+
     }
     catch(e){
       console.error(e);
