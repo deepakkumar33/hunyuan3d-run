@@ -1,171 +1,78 @@
 // static/js/main.js
+import { loadModel } from './threejs-viewer.js';  // local module import
+
 document.addEventListener('DOMContentLoaded', () => {
   console.log('main.js loaded at', new Date().toISOString());
+  const API = '';
 
-  const API = ''; // relative paths, e.g. POST to /api/convert
-
-  // NAVIGATION
-  const links   = document.querySelectorAll('.app-nav a');
-  const sections = document.querySelectorAll('.app-section');
-  links.forEach(a => a.addEventListener('click', e => {
+  // Navigation
+  const tabs = Array.from(document.querySelectorAll('.app-nav a'));
+  const sections = Array.from(document.querySelectorAll('.app-section'));
+  tabs.forEach(a => a.addEventListener('click', e => {
     e.preventDefault();
-    const t = a.getAttribute('href').slice(1);
-    links.forEach(n => n.parentElement.classList.remove('active'));
+    const id = a.getAttribute('href').slice(1);
+    tabs.forEach(t=>t.parentElement.classList.remove('active'));
     a.parentElement.classList.add('active');
-    sections.forEach(s => s.classList.toggle('active', s.id === t));
+    sections.forEach(s=>s.id===id ? s.classList.add('active') : s.classList.remove('active'));
   }));
 
-  // UPLOAD UI
-  const dropZone = document.getElementById('drop-zone');
-  const fi       = document.getElementById('file-input');
-  const browse   = document.getElementById('browse-btn');
-  const list     = document.getElementById('file-list');
-  const upload   = document.getElementById('upload-btn');
-  const clear    = document.getElementById('clear-btn');
-  let files = [];
+  // File selection
+  const dropZone=document.getElementById('drop-zone');
+  const fileInput=document.getElementById('file-input');
+  const fileList=document.getElementById('file-list');
+  const uploadBtn=document.getElementById('upload-btn');
+  const clearBtn=document.getElementById('clear-btn');
+  let files=[];
 
-  ['dragenter','dragover','dragleave','drop'].forEach(e =>
-    dropZone.addEventListener(e, ev => { ev.preventDefault(); ev.stopPropagation(); })
-  );
-  ['dragenter','dragover'].forEach(e =>
-    dropZone.addEventListener(e, ()=> dropZone.classList.add('drag-over'))
-  );
-  ['dragleave','drop'].forEach(e =>
-    dropZone.addEventListener(e, ()=> dropZone.classList.remove('drag-over'))
-  );
-  dropZone.addEventListener('drop', ev => handleFiles(ev.dataTransfer.files));
-  browse.addEventListener('click', ()=> fi.click());
-  fi.addEventListener('change', ()=> handleFiles(fi.files));
-  clear.addEventListener('click', ()=>{
-    files=[]; updateList(); updateUpload();
-  });
+  ['dragenter','dragover','dragleave','drop'].forEach(ev=> dropZone.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();}));
+  ['dragenter','dragover'].forEach(ev=> dropZone.addEventListener(ev,()=>dropZone.classList.add('drag-over')));
+  ['dragleave','drop'].forEach(ev=> dropZone.addEventListener(ev,()=>dropZone.classList.remove('drag-over')));
+  dropZone.addEventListener('drop', e=> addFiles(e.dataTransfer.files));
+  clearBtn.addEventListener('click', ()=>{ files=[]; renderList(); toggleUpload(); });
+  document.getElementById('browse-btn').addEventListener('click', ()=> fileInput.click());
+  fileInput.addEventListener('change', ()=> addFiles(fileInput.files));
 
-  function handleFiles(f) {
-    files = [...files, ...f];
-    updateList();
-    updateUpload();
+  function addFiles(fileListObj) {
+    files = [...files, ...fileListObj]; renderList(); toggleUpload();
   }
-  function updateList() {
-    if (!files.length) {
-      list.innerHTML = `<div class="empty-state"><i class="fas fa-images"></i><p>No files selected</p></div>`;
-      return;
-    }
-    list.innerHTML = '';
+  function renderList() {
+    if(!files.length) return fileList.innerHTML='<div class="empty-state"><i class="fas fa-images"></i><p>No files selected</p></div>';
+    fileList.innerHTML='';
     files.forEach((f,i)=>{
-      const div = document.createElement('div');
-      div.className = 'file-item';
-      div.innerHTML = `
-        <i class="fas fa-file-image file-icon"></i>
-        <div class="file-info">
-          <div class="file-name">${f.name}</div>
-          <div class="file-size">${(f.size/1024**2).toFixed(2)} MB</div>
-        </div>
-        <i class="fas fa-times file-remove" data-i="${i}"></i>`;
-      list.appendChild(div);
+      const div=document.createElement('div'); div.className='file-item';
+      div.innerHTML=`<i class="fas fa-file-image file-icon"></i><div class="file-info"><div class="file-name">${f.name}</div><div class="file-size">${(f.size/1024**2).toFixed(2)} MB</div></div><i class="fas fa-times file-remove" data-index="${i}"></i>`;
+      fileList.appendChild(div);
     });
-    document.querySelectorAll('.file-remove').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        files.splice(+btn.dataset.i,1);
-        updateList(); updateUpload();
-      });
-    });
+    fileList.querySelectorAll('.file-remove').forEach(btn=> btn.onclick=()=>{ files.splice(+btn.dataset.index,1); renderList(); toggleUpload(); });
   }
-  function updateUpload() {
-    upload.disabled = files.length===0;
-  }
+  function toggleUpload(){ uploadBtn.disabled = files.length===0; }
 
-  // UPLOAD & CONVERT
-  upload.addEventListener('click', async ()=>{
-    if (!files.length) return;
-    // switch to Process tab
-    links[1].click();
-
-    const form = new FormData();
-    files.forEach(f=> form.append('images', f));
-
+  // Conversion
+  uploadBtn.addEventListener('click', async ()=>{
+    if(!files.length) return;
+    tabs[1].click(); // go to processing
+    const form=new FormData(); files.forEach(f=> form.append('images',f));
     try {
-      startAnimation();
-      console.log('POST /api/convert …');
-      const res = await fetch(`${API}/api/convert`, { method:'POST', body:form });
-      if (!res.ok) {
-        const err = await res.json().catch(()=>({}));
-        throw new Error(err.error||`Status ${res.status}`);
-      }
-      const json = await res.json();
-      if (!json.model_url) throw new Error('no model_url returned');
-      console.log('Received model_url:', json.model_url);
-      // Load viewer and model
-      const viewer = await import('/static/js/threejs-viewer.js');
-      // viewer module exports loadModel
-      viewer.loadModel(json.model_url);
-
-      // After small delay, switch to View tab
-      setTimeout(()=> links[2].click(), 500);
-
-      // Setup export buttons. For now, only OBJ:
-      setupExport({ obj: json.model_url });
-
-    }
-    catch(e){
-      console.error(e);
-      alert(`Upload failed: ${e.message}`);
-      links[0].click();
-      finishAnimation();
-    }
+      animateProgress(true);
+      const resp=await fetch(`${API}/api/convert`,{method:'POST',body:form});
+      if(!resp.ok) throw new Error((await resp.json()).error||resp.status);
+      const {model_url}=await resp.json();
+      loadModel(model_url);
+      tabs[2].click();
+      setupExport(model_url);
+    } catch(err){ alert(`Error: ${err.message}`); tabs[0].click(); animateProgress(false); }
   });
 
-  // SIMPLE PROGRESS ANIMATION
-  function startAnimation(){
-    const txt = document.querySelector('.progress-text');
-    const pct = document.querySelector('.progress-percent');
-    const bar = document.querySelector('.progress-fill');
-    let p=0;
-    const iv = setInterval(()=>{
-      p = Math.min(100, p + Math.random()*15);
-      bar.style.width = p+'%';
-      pct.textContent = Math.floor(p)+'%';
-      txt.textContent = p<30 ? 'Analyzing…' : p<60 ? 'Building cloud…' : p<90 ? 'Meshing…' : 'Finalizing…';
-      if (p>=100) clearInterval(iv);
-      document.querySelector('.progress-container').dataset.iv = iv;
-    },300);
-  }
-  function finishAnimation(){
-    const txt = document.querySelector('.progress-text');
-    const pct = document.querySelector('.progress-percent');
-    const bar = document.querySelector('.progress-fill');
-    const iv  = document.querySelector('.progress-container').dataset.iv;
-    if (iv) clearInterval(+iv);
-    bar.style.width='100%';
-    pct.textContent='100%';
-    txt.textContent='Done!';
-    document.querySelectorAll('.status-badge').forEach(b=>b.classList.add('complete'));
-  }
+  // Progress UI
+  function animateProgress(start){ const txt=document.querySelector('.progress-text'), pct=document.querySelector('.progress-percent'), bar=document.querySelector('.progress-fill'); if(start){ bar.style.width='0%'; pct.textContent='0%'; txt.textContent='Starting...'; } else { bar.style.width='100%'; pct.textContent='100%'; txt.textContent='Done'; } }
 
-  function setupExport(links){
-    document.querySelectorAll('.export-card').forEach(card=>{
-      const fmt = card.dataset.format;
-      const btn = card.querySelector('.btn-export');
-      btn.addEventListener('click', ()=>{
-        if (links[fmt]) {
-          // Navigate to download URL
-          window.location.href = links[fmt];
-        } else {
-          alert(`No ${fmt} available`);
-        }
-      });
-    });
-    document.getElementById('back-to-view-btn')
-      .addEventListener('click', ()=> links[2] && links[2].click && links[2].click());
-    document.getElementById('new-project-btn')
-      .addEventListener('click', ()=> {
-        if (confirm('Start new project?')) {
-          files=[]; updateList(); updateUpload();
-          links[0].click();
-          document.getElementById('model-viewer').innerHTML = `
-            <div class="viewer-empty-state"><i class="fas fa-cube"></i><p>3D model will appear here</p></div>`;
-        }
-      });
-  }
+  // Export
+  function setupExport(url){ document.querySelectorAll('.export-card').forEach(card=>{
+    const fmt=card.dataset.format;
+    card.querySelector('.btn-export').onclick=()=> location.href=`${url.replace(/\.obj$/,'.'+fmt)}`;
+  });
+  document.getElementById('back-to-view-btn').onclick=()=> tabs[2].click();
+  document.getElementById('new-project-btn').onclick=()=> location.reload(); }
 
-  console.log('main.js ready');
+  console.log('main.js initialized');
 });
