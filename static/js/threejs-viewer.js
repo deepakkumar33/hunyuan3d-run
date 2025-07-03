@@ -54,144 +54,79 @@ function initViewer(){
 function animate(){
   requestAnimationFrame(animate);
   if (mesh) mesh.rotation.y += 0.005;
-  if (controls) controls.update();
-  if (renderer && scene && camera) renderer.render(scene, camera);
+  controls && controls.update();
+  renderer && renderer.render(scene, camera);
 }
 
-/**
- * Load a model URL. Detect extension:
- * - If .glb or .gltf → use GLTFLoader
- * - If .obj → use OBJLoader
- * Otherwise, attempt GLTFLoader first.
- */
 function loadModel(url){
   const container = document.getElementById('model-viewer');
-  if (!scene) {
-    initViewer();
-  } else {
+  if (!scene) initViewer();
+  else {
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
   }
 
-  // Loading indicator
   const ld = document.createElement('div');
   ld.className = 'viewer-empty-state';
   ld.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading model…</p>`;
   container.appendChild(ld);
 
-  // Remove previous mesh
   if (mesh) {
     scene.remove(mesh);
     mesh = null;
   }
 
-  // Choose loader by extension
   const lower = url.toLowerCase();
-  if (lower.endsWith('.obj')) {
-    // OBJLoader
-    const loader = new OBJLoader();
-    loader.load(
-      url,
-      obj => {
-        container.removeChild(ld);
-        mesh = obj;
-        mesh.traverse(ch => {
-          if (ch.isMesh) {
-            ch.material = new THREE.MeshPhongMaterial({
-              color: 0x6a4cff,
-              specular: 0x555555,
-              shininess: 50,
-              side: THREE.DoubleSide
-            });
-            const wf = new THREE.LineSegments(
-              new THREE.WireframeGeometry(ch.geometry),
-              new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
-            );
-            ch.add(wf);
-          }
-        });
-        scene.add(mesh);
+  const useOBJ = lower.endsWith('.obj');
+  const loader = useOBJ ? new OBJLoader() : new GLTFLoader();
 
-        // Center & scale
-        const box = new THREE.Box3().setFromObject(mesh);
-        const cen = box.getCenter(new THREE.Vector3());
-        const sz  = box.getSize(new THREE.Vector3());
-        const m = Math.max(sz.x, sz.y, sz.z);
-        mesh.position.sub(cen);
-        mesh.scale.setScalar(1.5 / m);
-        camera.position.set(0, 0, 2);
-        if (controls) {
-          controls.target.set(0, 0, 0);
-          controls.update();
+  loader.load(
+    url,
+    asset => {
+      container.removeChild(ld);
+      mesh = useOBJ ? asset : asset.scene;
+      mesh.traverse(ch => {
+        if (ch.isMesh) {
+          ch.material = new THREE.MeshPhongMaterial({
+            color: 0x6a4cff,
+            specular: 0x555555,
+            shininess: 50,
+            side: THREE.DoubleSide
+          });
+          const wf = new THREE.LineSegments(
+            new THREE.WireframeGeometry(ch.geometry),
+            new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
+          );
+          ch.add(wf);
         }
-      },
-      xhr => {
-        if (xhr.total) {
-          console.log(`OBJ Model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-        }
-      },
-      err => {
-        console.error('OBJ load error', err);
-        container.removeChild(ld);
-        const errDiv = document.createElement('div');
-        errDiv.className = 'viewer-empty-state';
-        errDiv.innerHTML = `<i class="fas fa-exclamation-triangle"></i><p>Failed to load OBJ model</p>`;
-        container.appendChild(errDiv);
-      }
-    );
-  } else {
-    // Attempt GLTFLoader
-    const loader = new GLTFLoader();
-    loader.load(
-      url,
-      gltf => {
-        container.removeChild(ld);
-        mesh = gltf.scene;
-        mesh.traverse(child => {
-          if (child.isMesh) {
-            child.material = new THREE.MeshPhongMaterial({
-              color: 0x6a4cff,
-              specular: 0x555555,
-              shininess: 50,
-              side: THREE.DoubleSide
-            });
-            const wf = new THREE.LineSegments(
-              new THREE.WireframeGeometry(child.geometry),
-              new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
-            );
-            child.add(wf);
-          }
-        });
-        scene.add(mesh);
+      });
+      scene.add(mesh);
 
-        // Center & scale
-        const box = new THREE.Box3().setFromObject(mesh);
-        const cen = box.getCenter(new THREE.Vector3());
-        const sz  = box.getSize(new THREE.Vector3());
-        const m = Math.max(sz.x, sz.y, sz.z);
-        mesh.position.sub(cen);
-        mesh.scale.setScalar(1.5 / m);
-        camera.position.set(0, 0, 2);
-        if (controls) {
-          controls.target.set(0, 0, 0);
-          controls.update();
-        }
-      },
-      xhr => {
-        if (xhr.total) {
-          console.log(`GLTF Model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-        }
-      },
-      err => {
-        console.error('GLTF load error', err);
-        container.removeChild(ld);
-        const errDiv = document.createElement('div');
-        errDiv.className = 'viewer-empty-state';
-        errDiv.innerHTML = `<i class="fas fa-exclamation-triangle"></i><p>Failed to load model</p>`;
-        container.appendChild(errDiv);
-      }
-    );
-  }
+      const box = new THREE.Box3().setFromObject(mesh);
+      const cen = box.getCenter(new THREE.Vector3());
+      const sz  = box.getSize(new THREE.Vector3());
+      const m = Math.max(sz.x, sz.y, sz.z);
+      mesh.position.sub(cen);
+      mesh.scale.setScalar(1.5 / m);
+      camera.position.set(0, 0, 2);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    },
+    xhr => {
+      if (xhr.total) console.log(`${useOBJ ? 'OBJ' : 'GLTF'} Model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
+    },
+    err => {
+      console.error('Model load error', err);
+      container.removeChild(ld);
+      const errDiv = document.createElement('div');
+      errDiv.className = 'viewer-empty-state';
+      errDiv.innerHTML = `<i class="fas fa-exclamation-triangle"></i><p>Failed to load model</p>`;
+      container.appendChild(errDiv);
+    }
+  );
 }
+
+// expose globally for main.js
+window.loadModel = loadModel;
 
 export { loadModel };
