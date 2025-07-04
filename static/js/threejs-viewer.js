@@ -1,159 +1,160 @@
 // static/js/threejs-viewer.js
+
 import * as THREE        from 'https://unpkg.com/three@0.150.1/build/three.module.js';
 import { OrbitControls } from 'https://unpkg.com/three@0.150.1/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader }    from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader }     from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/OBJLoader.js';
 
-
 let scene, camera, renderer, controls, currentMesh;
+let ambientLight, dirLight1, dirLight2;
 
-/**
- * Set up Three.js scene, camera, lights, renderer and controls.
- * Called automatically the first time you call loadModel().
- */
-function _initViewer() {
-  if (scene) return; // already initialized
-
+function initViewer() {
   const container = document.getElementById('model-viewer');
-  if (!container) {
-    throw new Error("unable to find <div id='model-viewer'>");
-  }
+  if (!container) throw new Error('No #model-viewer element');
 
-  // clear out any placeholder
+  // Clear out any placeholder
   container.innerHTML = '';
 
-  // 1) Scene
+  // Scene & camera
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
+  camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+  camera.position.set(0, 0, 3);
 
-  // 2) Camera
-  camera = new THREE.PerspectiveCamera(
-    75,
-    container.clientWidth / container.clientHeight,
-    0.1,
-    1000
-  );
-  camera.position.set(3, 3, 3);
-
-  // 3) Renderer
+  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  // 4) Controls
+  // Controls
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
-  controls.target.set(0, 0, 0);
 
-  // 5) Lights
-  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
-  scene.add(ambient);
+  // Lights
+  ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  scene.add(ambientLight);
 
-  const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
-  dir1.position.set(5, 5, 5);
-  scene.add(dir1);
+  dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight1.position.set(5, 5, 5);
+  dirLight1.castShadow = true;
+  scene.add(dirLight1);
 
-  const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
-  dir2.position.set(-5, -5, -5);
-  scene.add(dir2);
+  dirLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+  dirLight2.position.set(-5, -5, -5);
+  scene.add(dirLight2);
 
-  // 6) Resize handler
-  window.addEventListener('resize', () => {
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-  });
+  window.addEventListener('resize', onWindowResize);
+  animate();
+}
 
-  // 7) Render loop
-  (function animate() {
-    requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-  })();
+function onWindowResize() {
+  const container = document.getElementById('model-viewer');
+  if (!container || !camera || !renderer) return;
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(container.clientWidth, container.clientHeight);
+}
 
-  console.log('ThreeJS viewer initialized');
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
 }
 
 /**
- * Load a model (GLTF/GLB or OBJ) into the scene.
- * If not already initialized, will do so now.
- * @param {string} url  URL to .glb/.gltf/.obj file
+ * Load a mesh URL (.glb/.gltf or .obj)
  */
-export function loadModel(url) {
-  // 1) Ensure viewer is set up
-  try {
-    _initViewer();
-  } catch (err) {
-    console.error('Viewer initialization failed:', err);
-    const container = document.getElementById('model-viewer');
-    if (container) {
-      container.innerHTML = `
-        <div class="viewer-empty-state">
-          <i class="fas fa-exclamation-triangle"></i>
-          <p>Failed to initialize 3D viewer</p>
-          <p><small>${err.message}</small></p>
-        </div>`;
-    }
-    return;
-  }
+async function loadModel(url) {
+  if (!scene) initViewer();
 
   const container = document.getElementById('model-viewer');
+  // remove any old canvas
+  container.innerHTML = '';
+  container.appendChild(renderer.domElement);
 
-  // 2) Show loading indicator
-  const loaderDiv = document.createElement('div');
-  loaderDiv.className = 'viewer-empty-state';
-  loaderDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading model…</p>`;
-  container.appendChild(loaderDiv);
+  // loading indicator
+  const loading = document.createElement('div');
+  loading.className = 'viewer-empty-state';
+  loading.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
+  container.appendChild(loading);
 
-  // 3) Remove previous mesh
+  // remove previous mesh
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
   }
 
-  // 4) Choose loader by extension
   const ext = url.split('.').pop().toLowerCase();
-  const onProgress = xhr => {
-    if (xhr.total) {
-      console.log(`Model ${ext.toUpperCase()} ${(xhr.loaded/xhr.total*100).toFixed(1)}%`);
+  let loader;
+
+  try {
+    if (ext === 'obj') {
+      loader = new OBJLoader();
+      loader.load(
+        url,
+        obj => onLoad(obj, loading),
+        xhr => console.log(`OBJ ${(xhr.loaded/xhr.total*100).toFixed(1)}%`),
+        err => onError(err, loading)
+      );
+    } else {
+      loader = new GLTFLoader();
+      loader.load(
+        url,
+        gltf => onLoad(gltf.scene, loading),
+        xhr => console.log(`GLTF ${(xhr.loaded/xhr.total*100).toFixed(1)}%`),
+        err => onError(err, loading)
+      );
     }
-  };
-  const onError = err => {
-    console.error('Model load error:', err);
-    container.innerHTML = `
-      <div class="viewer-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load model</p>
-        <p><small>${err.message}</small></p>
-      </div>`;
-  };
-  const onLoadScene = obj => {
-    container.removeChild(loaderDiv);
-    currentMesh = (ext === 'obj') ? obj : obj.scene || obj;
-    scene.add(currentMesh);
-
-    // center & scale
-    const box = new THREE.Box3().setFromObject(currentMesh);
-    const c   = box.getCenter(new THREE.Vector3());
-    const s   = box.getSize(new THREE.Vector3());
-    currentMesh.position.sub(c);
-    const maxDim = Math.max(s.x, s.y, s.z);
-    currentMesh.scale.setScalar(1.5 / maxDim);
-
-    controls.target.set(0,0,0);
-    camera.position.set(0,0,2);
-    controls.update();
-
-    console.log('Model loaded into scene:', url);
-  };
-
-  if (ext === 'obj') {
-    new OBJLoader().load(url, onLoadScene, onProgress, onError);
-  } else {
-    new GLTFLoader().load(url, onLoadScene, onProgress, onError);
+  } catch (e) {
+    onError(e, loading);
   }
 }
+
+function onLoad(model, loadingDiv) {
+  loadingDiv.remove();
+  currentMesh = model;
+  model.traverse(child => {
+    if (child.isMesh) {
+      child.castShadow = child.receiveShadow = true;
+      child.material = new THREE.MeshPhongMaterial({
+        color: 0x6a4cff,
+        specular: 0x555555,
+        shininess: 50,
+        side: THREE.DoubleSide
+      });
+      const wf = new THREE.LineSegments(
+        new THREE.WireframeGeometry(child.geometry),
+        new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.1, transparent: true })
+      );
+      child.add(wf);
+    }
+  });
+  scene.add(model);
+
+  // center & scale
+  const box = new THREE.Box3().setFromObject(model);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  model.position.sub(center);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  model.scale.setScalar(1.5 / maxDim);
+
+  controls.target.set(0, 0, 0);
+  camera.position.set(0, 0, 3);
+  controls.update();
+}
+
+function onError(error, loadingDiv) {
+  console.error('Model load error', error);
+  loadingDiv.remove();
+  const container = document.getElementById('model-viewer');
+  const msg = document.createElement('div');
+  msg.className = 'viewer-empty-state';
+  msg.innerHTML = `<i class="fas fa-exclamation-triangle"></i><p>Failed to load model. See console.</p>`;
+  container.appendChild(msg);
+}
+
+export { loadModel };
