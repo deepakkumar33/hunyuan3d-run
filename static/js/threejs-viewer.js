@@ -1,50 +1,44 @@
-// static/js/threejs-viewer.js
+// threejs-viewer.js
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader }    from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader }     from 'three/examples/jsm/loaders/OBJLoader.js';
 
-import * as THREE        from 'https://unpkg.com/three@0.150.1/build/three.module.js';
-import { OrbitControls } from 'https://unpkg.com/three@0.150.1/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader }    from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
-import { OBJLoader }     from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/OBJLoader.js';
+let scene, camera, renderer, currentMesh, controls;
 
-let scene, camera, renderer, controls, currentMesh;
-let ambientLight, dirLight1, dirLight2;
-
-function initViewer() {
+export async function initThreeJSViewer() {
   const container = document.getElementById('model-viewer');
   if (!container) throw new Error('No #model-viewer element');
 
-  // Clear out any placeholder
+  // clear and set up scene/camera/renderer
   container.innerHTML = '';
-
-  // Scene & camera
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
-  camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-  camera.position.set(0, 0, 3);
 
-  // Renderer
+  camera = new THREE.PerspectiveCamera(
+    75,
+    container.clientWidth / container.clientHeight,
+    0.1,
+    1000
+  );
+  camera.position.set(0, 0, 2);
+
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  // Controls
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.dampingFactor = 0.05;
 
-  // Lights
-  ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-  scene.add(ambientLight);
-
-  dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight1.position.set(5, 5, 5);
-  dirLight1.castShadow = true;
-  scene.add(dirLight1);
-
-  dirLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
-  dirLight2.position.set(-5, -5, -5);
-  scene.add(dirLight2);
+  // lights
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const d1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  d1.position.set(1, 1, 1).normalize();
+  scene.add(d1);
+  const d2 = new THREE.DirectionalLight(0xffffff, 0.4);
+  d2.position.set(-1, -1, -1).normalize();
+  scene.add(d2);
 
   window.addEventListener('resize', onWindowResize);
   animate();
@@ -52,7 +46,7 @@ function initViewer() {
 
 function onWindowResize() {
   const container = document.getElementById('model-viewer');
-  if (!container || !camera || !renderer) return;
+  if (!container) return;
   camera.aspect = container.clientWidth / container.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(container.clientWidth, container.clientHeight);
@@ -64,97 +58,70 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-/**
- * Load a mesh URL (.glb/.gltf or .obj)
- */
-async function loadModel(url) {
-  if (!scene) initViewer();
+export async function loadModel(modelUrl) {
+  if (!scene) {
+    await initThreeJSViewer();
+  }
 
   const container = document.getElementById('model-viewer');
-  // remove any old canvas
-  container.innerHTML = '';
-  container.appendChild(renderer.domElement);
-
   // loading indicator
-  const loading = document.createElement('div');
-  loading.className = 'viewer-empty-state';
-  loading.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
-  container.appendChild(loading);
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'viewer-empty-state';
+  loadingDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
+  container.appendChild(loadingDiv);
 
-  // remove previous mesh
-  if (currentMesh) {
-    scene.remove(currentMesh);
-    currentMesh = null;
-  }
+  // remove previous
+  if (currentMesh) scene.remove(currentMesh);
 
-  const ext = url.split('.').pop().toLowerCase();
+  // pick loader
+  const ext = modelUrl.split('.').pop().toLowerCase();
   let loader;
-
-  try {
-    if (ext === 'obj') {
-      loader = new OBJLoader();
-      loader.load(
-        url,
-        obj => onLoad(obj, loading),
-        xhr => console.log(`OBJ ${(xhr.loaded/xhr.total*100).toFixed(1)}%`),
-        err => onError(err, loading)
-      );
-    } else {
-      loader = new GLTFLoader();
-      loader.load(
-        url,
-        gltf => onLoad(gltf.scene, loading),
-        xhr => console.log(`GLTF ${(xhr.loaded/xhr.total*100).toFixed(1)}%`),
-        err => onError(err, loading)
-      );
-    }
-  } catch (e) {
-    onError(e, loading);
+  if (ext === 'obj') {
+    loader = new OBJLoader();
+  } else {
+    loader = new GLTFLoader();
   }
-}
 
-function onLoad(model, loadingDiv) {
-  loadingDiv.remove();
-  currentMesh = model;
-  model.traverse(child => {
-    if (child.isMesh) {
-      child.castShadow = child.receiveShadow = true;
-      child.material = new THREE.MeshPhongMaterial({
-        color: 0x6a4cff,
-        specular: 0x555555,
-        shininess: 50,
-        side: THREE.DoubleSide
+  loader.load(
+    modelUrl,
+    gltfOrObj => {
+      container.removeChild(loadingDiv);
+      // GLTFLoader gives .scene, OBJLoader gives the object directly
+      currentMesh = gltfOrObj.scene || gltfOrObj;
+      currentMesh.traverse(child => {
+        if (child.isMesh) {
+          child.material = new THREE.MeshPhongMaterial({
+            color: 0x6a4cff,
+            specular: 0x555555,
+            shininess: 50,
+            side: THREE.DoubleSide
+          });
+        }
       });
-      const wf = new THREE.LineSegments(
-        new THREE.WireframeGeometry(child.geometry),
-        new THREE.LineBasicMaterial({ color: 0x000000, opacity: 0.1, transparent: true })
-      );
-      child.add(wf);
+      scene.add(currentMesh);
+
+      // center & scale
+      const box = new THREE.Box3().setFromObject(currentMesh);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      currentMesh.position.sub(center);
+      const m = Math.max(size.x, size.y, size.z);
+      currentMesh.scale.setScalar(1.5 / m);
+      controls.update();
+    },
+    xhr => {
+      if (xhr.total) {
+        console.log(`Model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
+      }
+    },
+    err => {
+      console.error('Model load error', err);
+      container.removeChild(loadingDiv);
+      container.innerHTML = `
+        <div class="viewer-empty-state">
+          <i class="fas fa-exclamation-triangle"></i>
+          <p>Failed to load 3D model</p>
+        </div>`;
     }
-  });
-  scene.add(model);
-
-  // center & scale
-  const box = new THREE.Box3().setFromObject(model);
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  model.position.sub(center);
-  const maxDim = Math.max(size.x, size.y, size.z);
-  model.scale.setScalar(1.5 / maxDim);
-
-  controls.target.set(0, 0, 0);
-  camera.position.set(0, 0, 3);
-  controls.update();
+  );
 }
-
-function onError(error, loadingDiv) {
-  console.error('Model load error', error);
-  loadingDiv.remove();
-  const container = document.getElementById('model-viewer');
-  const msg = document.createElement('div');
-  msg.className = 'viewer-empty-state';
-  msg.innerHTML = `<i class="fas fa-exclamation-triangle"></i><p>Failed to load model. See console.</p>`;
-  container.appendChild(msg);
-}
-
-export { loadModel };
