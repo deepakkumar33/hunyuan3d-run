@@ -1,207 +1,198 @@
-// static/js/main.js
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('main.js loaded', new Date().toISOString());
+import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+import { OrbitControls } from 'https://unpkg.com/three@0.150.1/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
 
-  // Base URL (protocol + host + port)
-  const ORIGIN = window.location.origin;
-  const CONVERT_API = `${ORIGIN}/api/convert`;
+let scene, camera, renderer, mesh, controls;
 
-  //
-  // 1) NAVIGATION
-  //
-  const tabs = document.querySelectorAll('.app-nav a');
-  const sections = document.querySelectorAll('.app-section');
-  tabs.forEach(tab => {
-    tab.addEventListener('click', e => {
-      e.preventDefault();
-      const tgt = tab.getAttribute('href').slice(1);
-      tabs.forEach(t => t.parentElement.classList.remove('active'));
-      tab.parentElement.classList.add('active');
-      sections.forEach(s => s.classList.toggle('active', s.id === tgt));
-    });
-  });
-
-  //
-  // 2) FILE SELECTION
-  //
-  const dropZone  = document.getElementById('drop-zone');
-  const fileInput = document.getElementById('file-input');
-  const browseBtn = document.getElementById('browse-btn');
-  const fileList  = document.getElementById('file-list');
-  const uploadBtn = document.getElementById('upload-btn');
-  const clearBtn  = document.getElementById('clear-btn');
-  let files = [];
-
-  // Prevent browser defaults
-  ['dragenter','dragover','dragleave','drop'].forEach(evt => 
-    dropZone.addEventListener(evt, e=>{e.preventDefault();e.stopPropagation();})
-  );
-  // Highlight on drag
-  ['dragenter','dragover'].forEach(evt =>
-    dropZone.addEventListener(evt, ()=> dropZone.classList.add('drag-over'))
-  );
-  ['dragleave','drop'].forEach(evt =>
-    dropZone.addEventListener(evt, ()=> dropZone.classList.remove('drag-over'))
-  );
-  dropZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
-  browseBtn .addEventListener('click', ()=> fileInput.click());
-  fileInput.addEventListener('change', ()=> handleFiles(fileInput.files));
-  clearBtn.addEventListener('click', ()=> { files=[]; refreshList(); });
-
-  function handleFiles(list) {
-    files = [...files, ...list];
-    refreshList();
-  }
-  function refreshList() {
-    if (!files.length) {
-      fileList.innerHTML = `
-        <div class="empty-state">
-          <i class="fas fa-images"></i>
-          <p>No files selected</p>
-        </div>`;
-      uploadBtn.disabled = true;
-      return;
-    }
-    uploadBtn.disabled = false;
-    fileList.innerHTML = '';
-    files.forEach((f,i) => {
-      const div = document.createElement('div');
-      div.className = 'file-item';
-      div.innerHTML = `
-        <i class="fas fa-file-image file-icon"></i>
-        <div class="file-info">
-          <div class="file-name">${f.name}</div>
-          <div class="file-size">${(f.size/1024**2).toFixed(2)} MB</div>
-        </div>
-        <i class="fas fa-times file-remove" data-idx="${i}"></i>`;
-      fileList.appendChild(div);
-    });
-    document.querySelectorAll('.file-remove').forEach(btn =>
-      btn.addEventListener('click', ()=>{
-        files.splice(+btn.dataset.idx,1);
-        refreshList();
-      })
-    );
-  }
-
-  //
-  // 3) UPLOAD & PROCESS
-  //
-  uploadBtn.addEventListener('click', async () => {
-    if (!files.length) return;
-
-    // switch to “Process” tab
-    tabs[1].click();
-
-    // build form
-    const form = new FormData();
-    files.forEach(f => form.append('images', f));
-
-    startProgress();
-    let modelUrl;
-
+function initThreeJSViewer() {
     try {
-      const res = await fetch(CONVERT_API, { method:'POST', body: form });
-      if (!res.ok) {
-        // if JSON error
-        const ct = res.headers.get('Content-Type')||'';
-        let msg;
-        if (ct.includes('application/json')) {
-          const j = await res.json();
-          msg = j.error||JSON.stringify(j);
-        } else {
-          msg = await res.text();
+        const container = document.getElementById('model-viewer');
+        if (!container) {
+            throw new Error('Model viewer container not found');
         }
-        throw new Error(msg);
-      }
-      const json = await res.json();
-      modelUrl = json.model_url;
-      if (!modelUrl) throw new Error('no model_url in response');
-    } 
-    catch(err) {
-      console.error('Conversion failed:', err);
-      alert(`Error: ${err.message}`);
-      tabs[0].click();
-      finishProgress();
-      return;
-    }
 
-    // load 3D viewer
+        container.innerHTML = '';
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf8f9fa);
+
+        camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 0, 2);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.25;
+        controls.target.set(0, 0, 0);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(1, 1, 1).normalize();
+        scene.add(directionalLight);
+
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+        directionalLight2.position.set(-1, -1, -1).normalize();
+        scene.add(directionalLight2);
+
+        window.addEventListener('resize', onWindowResize);
+        animate();
+    } catch (error) {
+        console.error('Error initializing Three.js viewer:', error);
+        const container = document.getElementById('model-viewer');
+        if (container) {
+            container.innerHTML = `
+                <div class="viewer-empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Failed to initialize 3D viewer. Check the console.</p>
+                </div>
+            `;
+        }
+    }
+}
+
+function createDemoRingMesh() {
     try {
-      const viewer = await import('/static/js/threejs-viewer.js');
-      await viewer.loadModel(modelUrl);
-    } catch(err) {
-      console.error('Viewer load failed:', err);
-      alert('Failed to initialize 3D viewer');
+        const geometry = new THREE.TorusGeometry(0.5, 0.15, 16, 32);
+        const material = new THREE.MeshPhongMaterial({
+            color: 0x6a4cff,
+            specular: 0x555555,
+            shininess: 50
+        });
+        mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        const wireframe = new THREE.LineSegments(
+            new THREE.WireframeGeometry(geometry),
+            new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
+        );
+        mesh.add(wireframe);
+    } catch (error) {
+        console.error('Error creating demo ring mesh:', error);
     }
+}
 
-    // switch to “View” tab
-    setTimeout(()=> tabs[2].click(), 300);
-    
-    // setup exports
-    const base = modelUrl.replace(/\.(?:obj|glb)$/, '');
-    setupExport({
-      obj: `${base}.obj`,
-      stl: `${base}.stl`,
-      ply: `${base}.ply`
-    });
+function onWindowResize() {
+    try {
+        const container = document.getElementById('model-viewer');
+        if (container && camera && renderer) {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+    } catch (error) {
+        console.error('Error on window resize:', error);
+    }
+}
 
-    finishProgress();
-  });
+function animate() {
+    try {
+        requestAnimationFrame(animate);
+        if (mesh) {
+            mesh.rotation.y += 0.005;
+        }
+        if (controls) {
+            controls.update();
+        }
+        if (renderer && scene && camera) {
+            renderer.render(scene, camera);
+        }
+    } catch (error) {
+        console.error('Error in animation loop:', error);
+    }
+}
 
-  //
-  // 4) PROGRESS ANIMATION
-  //
-  function startProgress(){
-    const txt = document.querySelector('.progress-text');
-    const pct = document.querySelector('.progress-percent');
-    const bar = document.querySelector('.progress-fill');
-    let p = 0;
-    const iv = setInterval(()=>{
-      p = Math.min(95, p + Math.random()*10);
-      bar.style.width = p+'%';
-      pct.textContent = Math.floor(p)+'%';
-      txt.textContent = p<30?'Analyzing…':p<60?'Meshing…': 'Finalizing…';
-      document.querySelector('.progress-container').dataset.iv = iv;
-    },300);
-  }
-  function finishProgress(){
-    const iv = +document.querySelector('.progress-container').dataset.iv;
-    if (iv) clearInterval(iv);
-    document.querySelector('.progress-fill').style.width='100%';
-    document.querySelector('.progress-percent').textContent='100%';
-    document.querySelector('.progress-text').textContent='Done!';
-    document.querySelectorAll('.status-badge').forEach(b=>b.classList.add('complete'));
-  }
+function loadModel(modelUrl, sessionId) {
+    try {
+        if (!scene || !renderer) {
+            initThreeJSViewer();
+        } else {
+            const container = document.getElementById('model-viewer');
+            if (container) {
+                container.innerHTML = '';
+                container.appendChild(renderer.domElement);
+            }
+        }
 
-  //
-  // 5) EXPORT BUTTONS
-  //
-  function setupExport(links){
-    document.querySelectorAll('.export-card').forEach(card=>{
-      const fmt = card.dataset.format;
-      const btn = card.querySelector('.btn-export');
-      btn.onclick = ()=>{
-        if (!links[fmt]) return alert(`.${fmt} not available`);
-        const a = document.createElement('a');
-        a.href = links[fmt].startsWith('http') ? links[fmt] : ORIGIN + links[fmt];
-        a.download = `model.${fmt}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      };
-    });
-    document.getElementById('back-to-view-btn').onclick = ()=> tabs[2].click();
-    document.getElementById('new-project-btn').onclick = ()=>{
-      if (!confirm('Start new project?')) return;
-      files = []; refreshList();
-      tabs[0].click();
-      document.getElementById('model-viewer').innerHTML = `
-        <div class="viewer-empty-state">
-          <i class="fas fa-cube"></i><p>3D model will appear here</p>
-        </div>`;
-    };
-  }
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'viewer-empty-state';
+        loadingDiv.innerHTML = `
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Loading 3D model...</p>
+        `;
+        document.getElementById('model-viewer').appendChild(loadingDiv);
 
-  console.log('main.js initialization complete');
-});
+        if (mesh) {
+            scene.remove(mesh);
+            mesh = null;
+        }
+
+        const loader = new GLTFLoader();
+        loader.load(
+            modelUrl,
+            function(gltf) {
+                document.getElementById('model-viewer').removeChild(loadingDiv);
+
+                mesh = gltf.scene;
+
+                mesh.traverse(function(child) {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshPhongMaterial({
+                            color: 0x6a4cff,
+                            specular: 0x555555,
+                            shininess: 50,
+                            side: THREE.DoubleSide
+                        });
+
+                        const wireframe = new THREE.LineSegments(
+                            new THREE.WireframeGeometry(child.geometry),
+                            new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
+                        );
+                        child.add(wireframe);
+                    }
+                });
+
+                scene.add(mesh);
+
+                const box = new THREE.Box3().setFromObject(mesh);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+
+                mesh.position.sub(center);
+                const scale = 1.5 / maxDim;
+                mesh.scale.set(scale, scale, scale);
+
+                camera.position.set(0, 0, 2);
+                camera.lookAt(0, 0, 0);
+                controls.target.set(0, 0, 0);
+                controls.update();
+
+                console.log('Model loaded successfully:', modelUrl);
+            },
+            function(xhr) {
+                console.log(`Loading model: ${(xhr.loaded / xhr.total * 100).toFixed(2)}%`);
+            },
+            function(error) {
+                console.error('Error loading model:', error);
+                document.getElementById('model-viewer').removeChild(loadingDiv);
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'viewer-empty-state';
+                errorDiv.innerHTML = `
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Failed to load model. Check if the .glb file is available or try again.</p>
+                `;
+                document.getElementById('model-viewer').appendChild(errorDiv);
+            }
+        );
+    } catch (error) {
+        console.error('Error in loadModel:', error);
+    }
+}
+
+export { initThreeJSViewer, loadModel };
