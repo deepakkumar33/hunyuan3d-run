@@ -1,132 +1,177 @@
-// main.js
-
-// All code from your previous script
-// with fixes for "body stream already read" error added below
-
 document.addEventListener('DOMContentLoaded', function () {
-  console.log('DOM fully loaded at:', new Date().toISOString());
+    console.log('DOM fully loaded at:', new Date().toISOString());
 
-  const SERVER_URL = 'http://143.110.215.184:5000';
+    const SERVER_URL = 'http://143.110.215.184:5000';
 
-  // (Navigation setup remains unchanged...)
-
-  // ... all earlier setup code, file input, drag & drop logic etc ...
-
-  uploadBtn.addEventListener('click', async () => {
-    if (files.length === 0) return;
-    document.querySelector('.app-nav li:nth-child(2) a').click();
-
-    const formData = new FormData();
-    files.forEach(file => {
-      formData.append('images', file);
-    });
-
+    // Navigation
     try {
-      startProcessingAnimation();
-      console.log('Sending upload request to:', `${SERVER_URL}/upload_jewelry`);
+        const navLinks = document.querySelectorAll('.app-nav a');
+        const sections = document.querySelectorAll('.app-section');
 
-      const response = await fetch(`${SERVER_URL}/upload_jewelry`, {
-        method: 'POST',
-        body: formData,
-        mode: 'cors',
-        cache: 'no-cache',
-        headers: {
-          'Accept': 'application/json',
+        navLinks.forEach(link => {
+            link.addEventListener('click', function (e) {
+                e.preventDefault();
+                const targetId = this.getAttribute('href').substring(1);
+
+                navLinks.forEach(navLink => navLink.parentElement.classList.remove('active'));
+                this.parentElement.classList.add('active');
+
+                sections.forEach(section => {
+                    section.classList.remove('active');
+                    if (section.id === targetId) {
+                        section.classList.add('active');
+                    }
+                });
+            });
+        });
+    } catch (err) {
+        console.error('Navigation setup failed:', err);
+    }
+
+    // Upload Logic
+    try {
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const browseBtn = document.getElementById('browse-btn');
+        const fileList = document.getElementById('file-list');
+        const uploadBtn = document.getElementById('upload-btn');
+        const clearBtn = document.getElementById('clear-btn');
+
+        let files = [];
+        let currentModel = null;
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
         }
-      });
 
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(event => {
+            dropZone.addEventListener(event, preventDefaults, false);
+        });
 
-      if (!response.ok) {
-        let errorMessage = `Upload failed with status ${response.status}`;
-        try {
-          const errorData = await response.clone().json();
-          errorMessage = errorData.error || errorMessage;
-        } catch (e) {
-          console.error('Could not parse error JSON:', e);
-          try {
-            const errorText = await response.clone().text();
-            errorMessage = errorText || errorMessage;
-          } catch (textErr) {
-            errorMessage = 'Unknown error occurred';
-          }
+        dropZone.addEventListener('dragover', () => dropZone.classList.add('drag-over'));
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+        dropZone.addEventListener('drop', (e) => {
+            dropZone.classList.remove('drag-over');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        browseBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', () => {
+            handleFiles(fileInput.files);
+        });
+
+        clearBtn.addEventListener('click', () => {
+            files = [];
+            updateFileList();
+        });
+
+        function handleFiles(newFiles) {
+            files = [...files, ...newFiles];
+            updateFileList();
         }
-        throw new Error(errorMessage);
-      }
 
-      let data;
-      try {
-        data = await response.clone().json();
-      } catch (jsonErr) {
-        const text = await response.clone().text();
-        console.warn("Fallback response text:", text);
-        throw new Error("Failed to parse JSON response.");
-      }
+        function updateFileList() {
+            fileList.innerHTML = '';
 
-      console.log('Upload response:', data);
-      completeProcessingAnimation();
+            if (files.length === 0) {
+                fileList.innerHTML = `<p>No files selected</p>`;
+                return;
+            }
 
-      if (data.model_url) {
-        currentModel = data.model_url;
+            files.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.textContent = `${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = 'X';
+                removeBtn.addEventListener('click', () => {
+                    files.splice(index, 1);
+                    updateFileList();
+                });
+                div.appendChild(removeBtn);
+                fileList.appendChild(div);
+            });
 
-        setTimeout(() => {
-          document.querySelector('.app-nav li:nth-child(3) a').click();
-          loadModel(currentModel);
-        }, 1500);
+            uploadBtn.disabled = files.length === 0;
+        }
 
-        const downloadLinks = {
-          obj: data.model_url.replace('.glb', '.obj'),
-          stl: data.model_url.replace('.glb', '.stl'),
-          ply: data.model_url.replace('.glb', '.ply')
+        uploadBtn.addEventListener('click', async () => {
+            if (!files.length) return;
+
+            document.querySelector('.app-nav li:nth-child(2) a').click();
+
+            const formData = new FormData();
+            files.forEach(file => formData.append('images', file));
+
+            try {
+                startProcessingAnimation();
+
+                const res = await fetch(`${SERVER_URL}/upload_jewelry`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const cloned = res.clone();
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok || !data.model_url) {
+                    const errorText = await cloned.text();
+                    throw new Error(`Upload failed: ${errorText}`);
+                }
+
+                currentModel = data.model_url;
+                completeProcessingAnimation();
+
+                setTimeout(() => {
+                    document.querySelector('.app-nav li:nth-child(3) a').click();
+                    window.loadModel(currentModel);
+                }, 1000);
+
+            } catch (err) {
+                completeProcessingAnimation();
+                alert(`Upload error: ${err.message}`);
+                document.querySelector('.app-nav li:nth-child(1) a').click();
+            }
+        });
+
+        function startProcessingAnimation() {
+            const fill = document.querySelector('.progress-fill');
+            const text = document.querySelector('.progress-text');
+            const percent = document.querySelector('.progress-percent');
+
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 5;
+                if (progress >= 100) {
+                    progress = 100;
+                    clearInterval(interval);
+                }
+                fill.style.width = `${progress}%`;
+                percent.textContent = `${progress}%`;
+                text.textContent = 'Processing...';
+            }, 300);
+
+            document.querySelector('.progress-container').dataset.intervalId = interval;
+        }
+
+        function completeProcessingAnimation() {
+            const intervalId = document.querySelector('.progress-container').dataset.intervalId;
+            if (intervalId) clearInterval(parseInt(intervalId));
+
+            document.querySelector('.progress-fill').style.width = '100%';
+            document.querySelector('.progress-percent').textContent = '100%';
+            document.querySelector('.progress-text').textContent = 'Done!';
+        }
+
+        window.loadModel = function (url) {
+            const viewer = document.getElementById('model-viewer');
+            const fullUrl = url.startsWith('http') ? url : `${SERVER_URL}${url}`;
+            viewer.innerHTML = `<a href="${fullUrl}" target="_blank">Download Model</a>`;
         };
-        setupExportButtons(downloadLinks);
-      } else {
-        throw new Error('No model URL returned from server');
-      }
-    } catch (error) {
-      console.error('Upload Error:', error);
-      completeProcessingAnimation();
-
-      let errorMessage = error.message;
-      if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-        errorMessage = `Cannot connect to server at ${SERVER_URL}. Please check:\n1. Server is running\n2. Server URL is correct (${SERVER_URL})\n3. CORS is enabled on server\n4. No firewall blocking the connection\n5. Network connectivity`;
-      } else if (error.message.includes('parse URL')) {
-        errorMessage = `Invalid server URL: ${SERVER_URL}. Please check the URL format.`;
-      }
-
-      alert(`Error: ${errorMessage}`);
-      document.querySelector('.app-nav li:nth-child(1) a').click();
+    } catch (err) {
+        console.error('Upload section error:', err);
     }
-  });
-
-  // ... other functions like startProcessingAnimation, completeProcessingAnimation, setupExportButtons, loadModel, etc. remain unchanged
-
-  // Example: keep your loadModel global method
-  window.loadModel = function (modelUrl) {
-    console.log('Loading model:', modelUrl);
-
-    if (!modelUrl) {
-      console.error('No model URL provided');
-      return;
-    }
-
-    const fullUrl = modelUrl.startsWith('http') ? modelUrl : `${SERVER_URL}${modelUrl}`;
-
-    if (window.initThreeJSViewer) {
-      window.initThreeJSViewer(fullUrl);
-    } else {
-      const viewer = document.getElementById('model-viewer');
-      viewer.innerHTML = `
-        <div class="viewer-empty-state">
-            <i class="fas fa-cube"></i>
-            <p>3D model loaded</p>
-            <p><small>${modelUrl}</small></p>
-            <a href="${fullUrl}" target="_blank" class="btn btn-primary">View Model</a>
-        </div>
-      `;
-    }
-  };
-
-  console.log('main.js initialized');
 });
