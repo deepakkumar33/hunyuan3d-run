@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
   uploadBtn.addEventListener('click', async () => {
     if (!files.length) return;
 
-    // switch to “Process” tab
+    // switch to "Process" tab
     tabs[1].click();
 
     // build form
@@ -136,11 +136,12 @@ document.addEventListener('DOMContentLoaded', () => {
       alert('Failed to initialize 3D viewer');
     }
 
-    // switch to “View” tab
+    // switch to "View" tab
     setTimeout(() => tabs[2].click(), 300);
 
-    // setup exports (also goes through `/api/output/...`)
-    const base = modelUrl.replace(/^\s*\/api\/output\/(.+)\.(?:obj|glb)\s*$/, '/api/output/$1');
+    // setup exports (just strip the current extension and re-append)
+    // modelUrl === "/api/output/<uuid>.obj" or ".glb"
+    const base = modelUrl.replace(/\.(?:obj|glb)$/, '');
     setupExport({
       obj: `${base}.obj`,
       stl: `${base}.stl`,
@@ -149,6 +150,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     finishProgress();
   });
+
+  // give the "Refine Mesh" button some behavior (so it doesn't just sit there)
+  document.getElementById('refine-btn').onclick = () => {
+    alert('Mesh refinement is coming soon! 🔧');
+  };
 
   //
   // 4) PROGRESS ANIMATION
