@@ -192,9 +192,41 @@ document.addEventListener('DOMContentLoaded', function() {
             updateUploadButton();
         });
 
+        // Test server connection before upload
+        async function testServerConnection() {
+            try {
+                console.log('Testing server connection...');
+                const response = await fetch(`${SERVER_URL}/health`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    console.log('Server is reachable');
+                    return true;
+                } else {
+                    console.warn('Server responded with status:', response.status);
+                    return false;
+                }
+            } catch (error) {
+                console.error('Server connection test failed:', error);
+                return false;
+            }
+        }
+
         // Upload and process
         uploadBtn.addEventListener('click', async () => {
             if (files.length === 0) return;
+
+            // Test server connection first
+            const serverReachable = await testServerConnection();
+            if (!serverReachable) {
+                alert(`Cannot connect to server at ${SERVER_URL}. Please check:\n1. Server is running\n2. Server URL is correct\n3. CORS is enabled on server\n4. No firewall blocking the connection`);
+                return;
+            }
 
             // Switch to process section
             document.querySelector('.app-nav li:nth-child(2) a').click();
@@ -212,18 +244,44 @@ document.addEventListener('DOMContentLoaded', function() {
                 const response = await fetch(`${SERVER_URL}/upload_jewelry`, {
                     method: 'POST',
                     body: formData,
-                    mode: 'cors'
+                    mode: 'cors',
+                    headers: {
+                        // Don't set Content-Type header - let browser set it with boundary for FormData
+                    }
                 });
+
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
 
                 if (!response.ok) {
                     let errorMessage = `Upload failed with status ${response.status}`;
+                    let errorDetails = '';
+                    
                     try {
-                        const errorData = await response.json();
-                        errorMessage = errorData.error || errorMessage;
+                        const errorText = await response.text();
+                        console.log('Error response text:', errorText);
+                        
+                        // Try to parse as JSON
+                        try {
+                            const errorData = JSON.parse(errorText);
+                            errorMessage = errorData.error || errorData.message || errorMessage;
+                        } catch (e) {
+                            errorDetails = errorText;
+                        }
                     } catch (e) {
-                        console.error('Could not parse error response:', e);
+                        console.error('Could not read error response:', e);
                     }
-                    throw new Error(errorMessage);
+                    
+                    // Handle specific error codes
+                    if (response.status === 405) {
+                        errorMessage = 'Method Not Allowed (405). The server endpoint may not support POST requests or the endpoint "/upload_jewelry" may not exist.';
+                    } else if (response.status === 404) {
+                        errorMessage = 'Endpoint not found (404). The "/upload_jewelry" endpoint may not exist on the server.';
+                    } else if (response.status === 500) {
+                        errorMessage = 'Internal server error (500). Check server logs for details.';
+                    }
+                    
+                    throw new Error(errorMessage + (errorDetails ? '\n\nDetails: ' + errorDetails : ''));
                 }
 
                 const data = await response.json();
