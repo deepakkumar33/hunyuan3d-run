@@ -1,308 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JewelryMesh - 3D Jewelry Mesh Generator</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/particles.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <style>
-        #browse-btn {
-            pointer-events: auto !important;
-            opacity: 1 !important;
-            visibility: visible !important;
-            display: inline-block !important;
-            position: relative !important;
-            z-index: 10 !important;
-            cursor: pointer !important;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>JewelryMesh - 3D Jewelry Mesh Generator</title>
+
+  <!-- IMPORT MAP: map 'three' and example loaders to the unpkg URLs -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.150.1/build/three.module.js",
+      "three/examples/jsm/controls/OrbitControls.js":
+        "https://unpkg.com/three@0.150.1/examples/jsm/controls/OrbitControls.js",
+      "three/examples/jsm/loaders/GLTFLoader.js":
+        "https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js",
+      "three/examples/jsm/loaders/OBJLoader.js":
+        "https://unpkg.com/three@0.150.1/examples/jsm/loaders/OBJLoader.js"
+    }
+  }
+  </script>
+
+  <!-- your CSS + fonts + font‑awesome links here -->
+  <link rel="stylesheet" href="{{ url_for('static','css/main.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static','css/particles.css') }}" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
+  />
+
+  <style>
+    #browse-btn {
+      pointer-events: auto !important;
+      z-index: 10 !important;
+    }
+  </style>
 </head>
+
 <body>
-    <div id="particles-js"></div>
-    
-    <div class="app-container">
-        <header class="app-header">
-            <div class="logo">
-                <i class="fas fa-gem"></i>
-                <h1>JewelryMesh</h1>
-            </div>
-            <nav class="app-nav">
-                <ul>
-                    <li class="active"><a href="#upload-section"><i class="fas fa-upload"></i> Upload</a></li>
-                    <li><a href="#process-section"><i class="fas fa-cog"></i> Process</a></li>
-                    <li><a href="#view-section"><i class="fas fa-eye"></i> View</a></li>
-                    <li><a href="#export-section"><i class="fas fa-download"></i> Export</a></li>
-                </ul>
-            </nav>
-        </header>
-        
-        <main class="app-main">
-            <section id="upload-section" class="app-section active">
-                <h2>Upload Jewelry Images</h2>
-                <p class="section-description">Upload multiple images of your jewelry from different angles for accurate 3D mesh generation.</p>
-                
-                <div class="upload-container">
-                    <div class="upload-box" id="drop-zone">
-                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
-                        <h3>Drag & Drop Images Here</h3>
-                        <p>or</p>
-                        <button class="btn btn-primary" id="browse-btn">Browse Files</button>
-                        <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
-                        <p class="file-requirements">Supports: JPG, PNG | Multiple images recommended</p>
-                    </div>
-                    
-                    <div class="uploaded-files-container">
-                        <h4>Selected Files</h4>
-                        <div class="uploaded-files" id="file-list">
-                            <div class="empty-state">
-                                <i class="fas fa-images"></i>
-                                <p>No files selected</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="action-buttons">
-                    <button class="btn btn-secondary" id="clear-btn">Clear All</button>
-                    <button class="btn btn-primary" id="upload-btn" disabled>Upload & Process</button>
-                </div>
-            </section>
-            
-            <section id="process-section" class="app-section">
-                <h2>Processing Images</h2>
-                <p class="section-description">Generating 3D mesh from your uploaded images. This may take a few minutes.</p>
-                
-                <div class="processing-container">
-                    <div class="processing-animation">
-                        <div class="ring-loader">
-                            <div class="ring ring-1"></div>
-                            <div class="ring ring-2"></div>
-                            <div class="ring ring-3"></div>
-                        </div>
-                        <div class="ai-processing">
-                            <i class="fas fa-brain"></i>
-                            <span>AI Processing</span>
-                        </div>
-                    </div>
-                    
-                    <div class="progress-container">
-                        <div class="progress-info">
-                            <span class="progress-text">Initializing...</span>
-                            <span class="progress-percent">0%</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: 0%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="processing-details">
-                        <div class="detail-card">
-                            <i class="fas fa-image"></i>
-                            <h4>Image Analysis</h4>
-                            <p>Extracting features from images</p>
-                            <div class="status-badge complete">
-                                <i class="fas fa-check"></i>
-                            </div>
-                        </div>
-                        <div class="detail-card">
-                            <i class="fas fa-cube"></i>
-                            <h4>3D Reconstruction</h4>
-                            <p>Building 3D point cloud</p>
-                            <div class="status-badge pending">
-                                <i class="fas fa-spinner fa-spin"></i>
-                            </div>
-                        </div>
-                        <div class="detail-card">
-                            <i class="fas fa-project-diagram"></i>
-                            <h4>Mesh Generation</h4>
-                            <p>Creating surface mesh</p>
-                            <div class="status-badge">
-                                <i class="fas fa-clock"></i>
-                            </div>
-                        </div>
-                        <div class="detail-card">
-                            <i class="fas fa-magic"></i>
-                            <h4>Refinement</h4>
-                            <p>Smoothing and optimizing</p>
-                            <div class="status-badge">
-                                <i class="fas fa-clock"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-            
-            <section id="view-section" class="app-section">
-                <h2>View 3D Model</h2>
-                <p class="section-description">View and inspect your generated 3D jewelry model.</p>
-                
-                <div class="viewer-container">
-                    <div class="model-viewer" id="model-viewer">
-                        <div class="viewer-empty-state">
-                            <i class="fas fa-cube"></i>
-                            <p>3D model will appear here</p>
-                        </div>
-                    </div>
-                    
-                    <div class="viewer-controls">
-                        <div class="control-group">
-                            <h4>View Options</h4>
-                            <div class="control-buttons">
-                                <button class="btn btn-control active" data-view="perspective">
-                                    <i class="fas fa-cube"></i> Perspective
-                                </button>
-                                <button class="btn btn-control" data-view="top">
-                                    <i class="fas fa-arrow-up"></i> Top
-                                </button>
-                                <button class="btn btn-control" data-view="front">
-                                    <i class="fas fa-arrow-right"></i> Front
-                                </button>
-                                <button class="btn btn-control" data-view="side">
-                                    <i class="fas fa-arrow-left"></i> Side
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div class="control-group">
-                            <h4>Mesh Settings</h4>
-                            <div class="control-item">
-                                <label for="mesh-opacity">Opacity</label>
-                                <input type="range" id="mesh-opacity" min="0" max="100" value="100">
-                            </div>
-                            <div class="control-item">
-                                <label for="mesh-quality">Quality</label>
-                                <select id="mesh-quality">
-                                    <option value="low">Low (Fast)</option>
-                                    <option value="medium" selected>Medium</option>
-                                    <option value="high">High (Slow)</option>
-                                </select>
-                            </div>
-                            <div class="control-item">
-                                <label>
-                                    <input type="checkbox" id="show-wireframe" checked>
-                                    Show Wireframe
-                                </label>
-                            </div>
-                        </div>
-                        
-                        <div class="control-group">
-                            <h4>Lighting</h4>
-                            <div class="control-item">
-                                <label for="light-intensity">Intensity</label>
-                                <input type="range" id="light-intensity" min="0" max="200" value="100">
-                            </div>
-                            <div class="control-item">
-                                <label>
-                                    <input type="checkbox" id="enable-shadows" checked>
-                                    Shadows
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="action-buttons">
-                    <button class="btn btn-secondary" id="refine-btn">
-                        <i class="fas fa-magic"></i> Refine Mesh
-                    </button>
-                    <button class="btn btn-primary" id="export-btn">
-                        <i class="fas fa-download"></i> Export Model
-                    </button>
-                </div>
-            </section>
-            
-            <section id="export-section" class="app-section">
-                <h2>Export 3D Model</h2>
-                <p class="section-description">Export your 3D jewelry model in various formats for 3D printing or further editing.</p>
-                
-                <div class="export-options">
-                    <div class="export-card" data-format="stl">
-                        <div class="export-icon">
-                            <i class="fas fa-cube"></i>
-                        </div>
-                        <h4>STL Format</h4>
-                        <p>Standard format for 3D printing</p>
-                        <button class="btn btn-export">Download STL</button>
-                    </div>
-                    
-                    <div class="export-card" data-format="obj">
-                        <div class="export-icon">
-                            <i class="fas fa-box-open"></i>
-                        </div>
-                        <h4>OBJ Format</h4>
-                        <p>Common format for 3D modeling</p>
-                        <button class="btn btn-export">Download OBJ</button>
-                    </div>
-                    
-                    <div class="export-card" data-format="ply">
-                        <div class="export-icon">
-                            <i class="fas fa-shapes"></i>
-                        </div>
-                        <h4>PLY Format</h4>
-                        <p>Includes color information</p>
-                        <button class="btn btn-export">Download PLY</button>
-                    </div>
-                </div>
-                
-                <div class="export-settings">
-                    <h4>Export Settings</h4>
-                    <div class="settings-grid">
-                        <div class="setting-item">
-                            <label for="export-scale">Scale (mm)</label>
-                            <input type="number" id="export-scale" value="10" min="1" max="1000">
-                        </div>
-                        <div class="setting-item">
-                            <label for="export-quality">Quality</label>
-                            <select id="export-quality">
-                                <option value="low">Low</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="high">High</option>
-                            </select>
-                        </div>
-                        <div class="setting-item">
-                            <label>
-                                <input type="checkbox" id="export-textures" checked>
-                                Include Textures
-                            </label>
-                        </div>
-                        <div class="setting-item">
-                            <label>
-                                <input type="checkbox" id="export-colors" checked>
-                                Include Colors
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="action-buttons">
-                    <button class="btn btn-secondary" id="back-to-view-btn">
-                        <i class="fas fa-arrow-left"></i> Back to Viewer
-                    </button>
-                    <button class="btn btn-primary" id="new-project-btn">
-                        <i class="fas fa-plus"></i> New Project
-                    </button>
-                </div>
-            </section>
-        </main>
-        
-        <footer class="app-footer">
-            <div class="footer-left">
-                <p>JewelryMesh Pro - Version 1.0</p>
-            </div>
-            <div class="footer-right">
-                <p>© 2025 JewelryMesh. All rights reserved.</p>
-            </div>
-        </footer>
-    </div>
-    
-    <!-- Particles.js -->
-    <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
-    <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
-    
-    <!-- Main app scripts -->
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <div id="particles-js"></div>
+  <div class="app-container">
+    <!-- … keep your existing header/nav/main/sections exactly as before … -->
+  </div>
+
+  <!-- particles.js -->
+  <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
+  <script src="{{ url_for('static','js/particles.js') }}"></script>
+
+  <!-- main application script -->
+  <script type="module" src="{{ url_for('static','js/main.js') }}"></script>
 </body>
 </html>
