@@ -1,6 +1,9 @@
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM fully loaded at:', new Date().toISOString());
 
+    // Configuration - Change this to your server URL
+    const SERVER_URL = 'http://143.110.2158.184:5000'; // Change this to your actual server URL
+    
     // Navigation
     try {
         const navLinks = document.querySelectorAll('.app-nav a');
@@ -68,6 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         let files = [];
         let sessionId = null;
+        let currentModel = null;
 
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             dropZone.addEventListener(eventName, preventDefaults, false);
@@ -183,107 +187,89 @@ document.addEventListener('DOMContentLoaded', function() {
 
         clearBtn.addEventListener('click', () => {
             files = [];
+            fileInput.value = '';
             updateFileList();
             updateUploadButton();
         });
-
-        // Dynamically load threejs-viewer.js only when needed
-        async function loadThreeJSViewer() {
-            try {
-                const module = await import('/static/js/threejs-viewer.js');
-                return module;
-            } catch (error) {
-                console.error('Failed to load threejs-viewer.js:', error);
-                alert('Error loading 3D viewer. Check the console.');
-                return null;
-            }
-        }
 
         // Upload and process
         uploadBtn.addEventListener('click', async () => {
             if (files.length === 0) return;
 
+            // Switch to process section
             document.querySelector('.app-nav li:nth-child(2) a').click();
 
             const formData = new FormData();
             files.forEach(file => {
-                formData.append('images', file); // Changed to 'images' to match Flask
+                formData.append('images', file);
             });
 
             try {
                 startProcessingAnimation();
 
-                console.log('Sending upload request to /upload_jewelry');
-                const response = await fetch('http://localhost:5000/upload_jewelry', {
+                console.log('Sending upload request to:', `${SERVER_URL}/upload_jewelry`);
+                
+                const response = await fetch(`${SERVER_URL}/upload_jewelry`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    mode: 'cors', // Enable CORS
+                    headers: {
+                        'Access-Control-Allow-Origin': '*',
+                    }
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || `Upload failed with status ${response.status}`);
+                    let errorMessage = `Upload failed with status ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = errorData.error || errorMessage;
+                    } catch (e) {
+                        console.error('Could not parse error response:', e);
+                    }
+                    throw new Error(errorMessage);
                 }
 
                 const data = await response.json();
                 console.log('Upload response:', data);
 
-                if (data.model_url) {
-                    const threeJSViewer = await loadThreeJSViewer();
-                    if (threeJSViewer) {
-                        threeJSViewer.loadModel(data.model_url, null); // No sessionId needed for single model
-                        setTimeout(() => {
-                            document.querySelector('.app-nav li:nth-child(3) a').click();
-                        }, 1000);
-                        setupExportButtons(null, { obj: data.model_url.replace('.glb', '.obj') }); // Assume .obj for simplicity
-                    }
-                } else {
-                    throw new Error('No model URL returned from upload');
-                }
-            } catch (error) {
-                console.error('Error:', error);
-                alert(`Error: ${error.message}. Please check the server logs and ensure the server is running on http://localhost:5000.`);
-                document.querySelector('.app-nav li:nth-child(1) a').click();
+                // Complete the processing animation
                 completeProcessingAnimation();
+
+                if (data.model_url) {
+                    currentModel = data.model_url;
+                    
+                    // Wait a bit then switch to view section
+                    setTimeout(() => {
+                        document.querySelector('.app-nav li:nth-child(3) a').click();
+                        // Load the model
+                        loadModel(currentModel);
+                    }, 1500);
+                    
+                    // Setup export buttons with available formats
+                    const downloadLinks = {
+                        obj: data.model_url.replace('.glb', '.obj'),
+                        stl: data.model_url.replace('.glb', '.stl'),
+                        ply: data.model_url.replace('.glb', '.ply')
+                    };
+                    setupExportButtons(downloadLinks);
+                    
+                } else {
+                    throw new Error('No model URL returned from server');
+                }
+                
+            } catch (error) {
+                console.error('Upload Error:', error);
+                completeProcessingAnimation();
+                
+                let errorMessage = error.message;
+                if (error.message.includes('Failed to fetch')) {
+                    errorMessage = `Cannot connect to server at ${SERVER_URL}. Please check:\n1. Server is running\n2. Server URL is correct\n3. CORS is enabled on server\n4. No firewall blocking the connection`;
+                }
+                
+                alert(`Error: ${errorMessage}`);
+                document.querySelector('.app-nav li:nth-child(1) a').click();
             }
         });
-
-        function checkStatus(sessionId) {
-            // Simplified status check since we're using a single request
-            const statusElement = document.querySelector('.progress-text');
-            const progressPercent = document.querySelector('.progress-percent');
-            const progressFill = document.querySelector('.progress-fill');
-            const statusBadges = document.querySelectorAll('.status-badge');
-
-            let progress = 0;
-            const interval = setInterval(() => {
-                progress += Math.random() * 10;
-                if (progress > 100) progress = 100;
-
-                progressFill.style.width = `${progress}%`;
-                progressPercent.textContent = `${Math.floor(progress)}%`;
-
-                if (progress < 30) {
-                    statusElement.textContent = 'Analyzing images...';
-                    statusBadges[0].classList.add('complete');
-                    statusBadges[1].classList.add('pending');
-                } else if (progress < 60) {
-                    statusElement.textContent = 'Generating 3D point cloud...';
-                    statusBadges[1].classList.add('complete');
-                    statusBadges[2].classList.add('pending');
-                } else if (progress < 90) {
-                    statusElement.textContent = 'Creating surface mesh...';
-                    statusBadges[2].classList.add('complete');
-                    statusBadges[3].classList.add('pending');
-                } else {
-                    statusElement.textContent = 'Finalizing model...';
-                }
-
-                if (progress === 100) {
-                    clearInterval(interval);
-                    completeProcessingAnimation();
-                }
-            }, 3000);
-        }
 
         function startProcessingAnimation() {
             const progressText = document.querySelector('.progress-text');
@@ -291,34 +277,42 @@ document.addEventListener('DOMContentLoaded', function() {
             const progressFill = document.querySelector('.progress-fill');
             const statusBadges = document.querySelectorAll('.status-badge');
 
+            // Reset all badges
+            statusBadges.forEach(badge => {
+                badge.classList.remove('complete', 'pending');
+            });
+
             let progress = 0;
             const interval = setInterval(() => {
-                progress += Math.random() * 10;
-                if (progress > 100) progress = 100;
+                progress += Math.random() * 5 + 2; // Slower, more realistic progress
+                if (progress > 95) progress = 95; // Don't complete automatically
 
                 progressFill.style.width = `${progress}%`;
                 progressPercent.textContent = `${Math.floor(progress)}%`;
 
-                if (progress < 30) {
+                if (progress < 25) {
                     progressText.textContent = 'Analyzing images...';
-                } else if (progress < 60) {
+                    statusBadges[0].classList.add('pending');
+                } else if (progress < 50) {
                     progressText.textContent = 'Generating 3D point cloud...';
+                    statusBadges[0].classList.remove('pending');
                     statusBadges[0].classList.add('complete');
                     statusBadges[1].classList.add('pending');
-                } else if (progress < 90) {
+                } else if (progress < 75) {
                     progressText.textContent = 'Creating surface mesh...';
+                    statusBadges[1].classList.remove('pending');
+                    statusBadges[1].classList.add('complete');
                     statusBadges[2].classList.add('pending');
                 } else {
                     progressText.textContent = 'Finalizing model...';
+                    statusBadges[2].classList.remove('pending');
+                    statusBadges[2].classList.add('complete');
                     statusBadges[3].classList.add('pending');
                 }
 
+                // Store interval ID for cleanup
                 document.querySelector('.progress-container').dataset.intervalId = interval;
-
-                if (progress === 100) {
-                    clearInterval(interval);
-                }
-            }, 300);
+            }, 500);
         }
 
         function completeProcessingAnimation() {
@@ -342,7 +336,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        function setupExportButtons(sessionId, downloadLinks) {
+        function setupExportButtons(downloadLinks) {
             const exportCards = document.querySelectorAll('.export-card');
 
             exportCards.forEach(card => {
@@ -351,7 +345,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 btn.addEventListener('click', () => {
                     if (downloadLinks[format]) {
-                        window.location.href = `http://localhost:5000${downloadLinks[format]}`;
+                        const downloadUrl = downloadLinks[format].startsWith('http') ? 
+                            downloadLinks[format] : 
+                            `${SERVER_URL}${downloadLinks[format]}`;
+                        
+                        // Create a temporary link to trigger download
+                        const link = document.createElement('a');
+                        link.href = downloadUrl;
+                        link.download = `jewelry_model.${format}`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
                     } else {
                         alert(`File format ${format} not available`);
                     }
@@ -365,10 +369,13 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('new-project-btn').addEventListener('click', () => {
                 if (confirm('Start a new project? All current data will be lost.')) {
                     files = [];
+                    fileInput.value = '';
                     sessionId = null;
+                    currentModel = null;
                     updateFileList();
                     updateUploadButton();
 
+                    // Clear the viewer
                     const viewer = document.getElementById('model-viewer');
                     viewer.innerHTML = `
                         <div class="viewer-empty-state">
@@ -382,17 +389,126 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
+        // View section controls
         document.getElementById('refine-btn').addEventListener('click', () => {
-            alert('Mesh refinement would be implemented here');
+            alert('Mesh refinement feature coming soon!');
         });
 
         document.getElementById('export-btn').addEventListener('click', () => {
-            document.querySelector('.app-nav li:nth-child(4) a').click();
+            if (currentModel) {
+                document.querySelector('.app-nav li:nth-child(4) a').click();
+            } else {
+                alert('No model loaded. Please upload and process images first.');
+            }
         });
+
+        // Viewer controls
+        setupViewerControls();
+
+        function setupViewerControls() {
+            // View buttons
+            const viewButtons = document.querySelectorAll('.btn-control[data-view]');
+            viewButtons.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    viewButtons.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    const view = this.getAttribute('data-view');
+                    if (window.setViewAngle) {
+                        window.setViewAngle(view);
+                    }
+                });
+            });
+
+            // Opacity control
+            const opacitySlider = document.getElementById('mesh-opacity');
+            if (opacitySlider) {
+                opacitySlider.addEventListener('input', function() {
+                    const opacity = this.value / 100;
+                    if (window.setMeshOpacity) {
+                        window.setMeshOpacity(opacity);
+                    }
+                });
+            }
+
+            // Quality control
+            const qualitySelect = document.getElementById('mesh-quality');
+            if (qualitySelect) {
+                qualitySelect.addEventListener('change', function() {
+                    const quality = this.value;
+                    if (window.setMeshQuality) {
+                        window.setMeshQuality(quality);
+                    }
+                });
+            }
+
+            // Wireframe toggle
+            const wireframeToggle = document.getElementById('show-wireframe');
+            if (wireframeToggle) {
+                wireframeToggle.addEventListener('change', function() {
+                    const showWireframe = this.checked;
+                    if (window.toggleWireframe) {
+                        window.toggleWireframe(showWireframe);
+                    }
+                });
+            }
+
+            // Light intensity
+            const lightSlider = document.getElementById('light-intensity');
+            if (lightSlider) {
+                lightSlider.addEventListener('input', function() {
+                    const intensity = this.value / 100;
+                    if (window.setLightIntensity) {
+                        window.setLightIntensity(intensity);
+                    }
+                });
+            }
+
+            // Shadows toggle
+            const shadowsToggle = document.getElementById('enable-shadows');
+            if (shadowsToggle) {
+                shadowsToggle.addEventListener('change', function() {
+                    const enableShadows = this.checked;
+                    if (window.toggleShadows) {
+                        window.toggleShadows(enableShadows);
+                    }
+                });
+            }
+        }
 
         console.log('File upload setup complete');
     } catch (error) {
         console.error('Error in File Upload section:', error);
         alert('An error occurred while setting up file upload. Check the console.');
     }
+
+    // Global function to load model (called from upload success)
+    window.loadModel = function(modelUrl) {
+        console.log('Loading model:', modelUrl);
+        
+        if (!modelUrl) {
+            console.error('No model URL provided');
+            return;
+        }
+
+        // Make sure URL is absolute
+        const fullUrl = modelUrl.startsWith('http') ? modelUrl : `${SERVER_URL}${modelUrl}`;
+        
+        // Initialize or update viewer
+        if (window.initThreeJSViewer) {
+            window.initThreeJSViewer(fullUrl);
+        } else {
+            console.error('ThreeJS viewer not loaded');
+            // Fallback: show model info
+            const viewer = document.getElementById('model-viewer');
+            viewer.innerHTML = `
+                <div class="viewer-empty-state">
+                    <i class="fas fa-cube"></i>
+                    <p>3D model loaded</p>
+                    <p><small>${modelUrl}</small></p>
+                    <a href="${fullUrl}" target="_blank" class="btn btn-primary">View Model</a>
+                </div>
+            `;
+        }
+    };
 });
