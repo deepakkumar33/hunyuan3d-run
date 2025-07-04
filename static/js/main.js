@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM fully loaded at:', new Date().toISOString());
 
     // Configuration - Change this to your server URL
-    const SERVER_URL = 'http://143.110.2158.184:5000'; // Change this to your actual server URL
+    const SERVER_URL = 'http://143.110.215.184:5000'; // Fixed IP address
     
     // Navigation
     try {
@@ -212,10 +212,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const response = await fetch(`${SERVER_URL}/upload_jewelry`, {
                     method: 'POST',
                     body: formData,
-                    mode: 'cors', // Enable CORS
-                    headers: {
-                        'Access-Control-Allow-Origin': '*',
-                    }
+                    mode: 'cors'
                 });
 
                 if (!response.ok) {
