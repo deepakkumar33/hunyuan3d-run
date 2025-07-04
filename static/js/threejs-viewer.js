@@ -7,97 +7,132 @@ import { OBJLoader }   from 'https://unpkg.com/three@0.150.1/examples/jsm/loader
 let scene, camera, renderer, controls, currentMesh;
 
 /**
- * Internal helper: set up scene, camera, lights, renderer, controls.
+ * Set up Three.js scene, camera, lights, renderer and controls.
+ * Called automatically the first time you call loadModel().
  */
-function _init() {
-  if (scene) return;              // already done
-  const container = document.getElementById('model-viewer');
-  if (!container) throw new Error('#model-viewer container not found');
+function _initViewer() {
+  if (scene) return; // already initialized
 
-  // clear
+  const container = document.getElementById('model-viewer');
+  if (!container) {
+    throw new Error("unable to find <div id='model-viewer'>");
+  }
+
+  // clear out any placeholder
   container.innerHTML = '';
 
-  // 1) scene
+  // 1) Scene
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
 
-  // 2) camera
-  camera = new THREE.PerspectiveCamera(75, container.clientWidth/container.clientHeight, 0.1, 1000);
-  camera.position.set(3,3,3);
+  // 2) Camera
+  camera = new THREE.PerspectiveCamera(
+    75,
+    container.clientWidth / container.clientHeight,
+    0.1,
+    1000
+  );
+  camera.position.set(3, 3, 3);
 
-  // 3) renderer
-  renderer = new THREE.WebGLRenderer({ antialias:true });
+  // 3) Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
-  // 4) controls
+  // 4) Controls
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
-  controls.target.set(0,0,0);
+  controls.target.set(0, 0, 0);
 
-  // 5) lights
-  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-  const dl1 = new THREE.DirectionalLight(0xffffff, 0.8);
-  dl1.position.set(5,5,5);
-  scene.add(dl1);
-  const dl2 = new THREE.DirectionalLight(0xffffff, 0.3);
-  dl2.position.set(-5,-5,-5);
-  scene.add(dl2);
+  // 5) Lights
+  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+  scene.add(ambient);
 
-  // 6) handle resize
-  window.addEventListener('resize', ()=>{
-    const w = container.clientWidth, h = container.clientHeight;
-    camera.aspect = w/h;
+  const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir1.position.set(5, 5, 5);
+  scene.add(dir1);
+
+  const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
+  dir2.position.set(-5, -5, -5);
+  scene.add(dir2);
+
+  // 6) Resize handler
+  window.addEventListener('resize', () => {
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(w,h);
+    renderer.setSize(w, h);
   });
 
-  // 7) render loop
-  (function animate(){
+  // 7) Render loop
+  (function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
   })();
+
+  console.log('ThreeJS viewer initialized');
 }
 
 /**
- * Load a 3D model (GLTF or OBJ) into the scene.
- * If this is the first call, will automatically init the viewer.
- * @param {string} url absolute or relative URL to .glb/.gltf/.obj
+ * Load a model (GLTF/GLB or OBJ) into the scene.
+ * If not already initialized, will do so now.
+ * @param {string} url  URL to .glb/.gltf/.obj file
  */
-export async function loadModel(url) {
+export function loadModel(url) {
+  // 1) Ensure viewer is set up
   try {
-    _init();
-  } catch(err) {
-    console.error('Viewer init failed:', err);
-    document.getElementById('model-viewer').innerHTML = `
-      <div class="viewer-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to initialize 3D viewer</p>
-      </div>`;
+    _initViewer();
+  } catch (err) {
+    console.error('Viewer initialization failed:', err);
+    const container = document.getElementById('model-viewer');
+    if (container) {
+      container.innerHTML = `
+        <div class="viewer-empty-state">
+          <i class="fas fa-exclamation-triangle"></i>
+          <p>Failed to initialize 3D viewer</p>
+          <p><small>${err.message}</small></p>
+        </div>`;
+    }
     return;
   }
 
   const container = document.getElementById('model-viewer');
-  // show loading overlay
-  const overlay = document.createElement('div');
-  overlay.className = 'viewer-empty-state';
-  overlay.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading model…</p>`;
-  container.appendChild(overlay);
 
-  // remove previous mesh
+  // 2) Show loading indicator
+  const loaderDiv = document.createElement('div');
+  loaderDiv.className = 'viewer-empty-state';
+  loaderDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading model…</p>`;
+  container.appendChild(loaderDiv);
+
+  // 3) Remove previous mesh
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
   }
 
-  // loader selection
+  // 4) Choose loader by extension
   const ext = url.split('.').pop().toLowerCase();
-  const onLoad = obj => {
-    container.removeChild(overlay);
-    currentMesh = ext === 'obj' ? obj : obj.scene || obj;
+  const onProgress = xhr => {
+    if (xhr.total) {
+      console.log(`Model ${ext.toUpperCase()} ${(xhr.loaded/xhr.total*100).toFixed(1)}%`);
+    }
+  };
+  const onError = err => {
+    console.error('Model load error:', err);
+    container.innerHTML = `
+      <div class="viewer-empty-state">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>Failed to load model</p>
+        <p><small>${err.message}</small></p>
+      </div>`;
+  };
+  const onLoadScene = obj => {
+    container.removeChild(loaderDiv);
+    currentMesh = (ext === 'obj') ? obj : obj.scene || obj;
     scene.add(currentMesh);
 
     // center & scale
@@ -105,32 +140,19 @@ export async function loadModel(url) {
     const c   = box.getCenter(new THREE.Vector3());
     const s   = box.getSize(new THREE.Vector3());
     currentMesh.position.sub(c);
-    const m = Math.max(s.x,s.y,s.z);
-    currentMesh.scale.setScalar(1.5/m);
+    const maxDim = Math.max(s.x, s.y, s.z);
+    currentMesh.scale.setScalar(1.5 / maxDim);
 
     controls.target.set(0,0,0);
     camera.position.set(0,0,2);
     controls.update();
-    console.log('Model loaded:', url);
-  };
-  const onProgress = xhr => {
-    if (xhr.total) {
-      console.log(`Loading: ${(xhr.loaded/xhr.total*100).toFixed(1)}%`);
-    }
-  };
-  const onError = err => {
-    console.error('Model load error:', err);
-    container.removeChild(overlay);
-    container.innerHTML = `
-      <div class="viewer-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load model</p>
-      </div>`;
+
+    console.log('Model loaded into scene:', url);
   };
 
   if (ext === 'obj') {
-    new OBJLoader().load(url, onLoad, onProgress, onError);
+    new OBJLoader().load(url, onLoadScene, onProgress, onError);
   } else {
-    new GLTFLoader().load(url, gltf => onLoad(gltf), onProgress, onError);
+    new GLTFLoader().load(url, onLoadScene, onProgress, onError);
   }
 }
