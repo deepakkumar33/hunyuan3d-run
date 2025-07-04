@@ -3,13 +3,13 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('main.js loaded', new Date().toISOString());
 
   // Base URL (protocol + host + port)
-  const ORIGIN = window.location.origin;
+  const ORIGIN      = window.location.origin;
   const CONVERT_API = `${ORIGIN}/api/convert`;
 
   //
   // 1) NAVIGATION
   //
-  const tabs = document.querySelectorAll('.app-nav a');
+  const tabs     = document.querySelectorAll('.app-nav a');
   const sections = document.querySelectorAll('.app-section');
   tabs.forEach(tab => {
     tab.addEventListener('click', e => {
@@ -33,20 +33,20 @@ document.addEventListener('DOMContentLoaded', () => {
   let files = [];
 
   // Prevent browser defaults
-  ['dragenter','dragover','dragleave','drop'].forEach(evt => 
-    dropZone.addEventListener(evt, e=>{e.preventDefault();e.stopPropagation();})
+  ['dragenter','dragover','dragleave','drop'].forEach(evt =>
+    dropZone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); })
   );
   // Highlight on drag
   ['dragenter','dragover'].forEach(evt =>
-    dropZone.addEventListener(evt, ()=> dropZone.classList.add('drag-over'))
+    dropZone.addEventListener(evt, () => dropZone.classList.add('drag-over'))
   );
   ['dragleave','drop'].forEach(evt =>
-    dropZone.addEventListener(evt, ()=> dropZone.classList.remove('drag-over'))
+    dropZone.addEventListener(evt, () => dropZone.classList.remove('drag-over'))
   );
   dropZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
-  browseBtn .addEventListener('click', ()=> fileInput.click());
-  fileInput.addEventListener('change', ()=> handleFiles(fileInput.files));
-  clearBtn.addEventListener('click', ()=> { files=[]; refreshList(); });
+  browseBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+  clearBtn.addEventListener('click', () => { files = []; refreshList(); });
 
   function handleFiles(list) {
     files = [...files, ...list];
@@ -77,7 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
       fileList.appendChild(div);
     });
     document.querySelectorAll('.file-remove').forEach(btn =>
-      btn.addEventListener('click', ()=>{
+      btn.addEventListener('click', () => {
         files.splice(+btn.dataset.idx,1);
         refreshList();
       })
@@ -103,7 +103,6 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch(CONVERT_API, { method:'POST', body: form });
       if (!res.ok) {
-        // if JSON error
         const ct = res.headers.get('Content-Type')||'';
         let msg;
         if (ct.includes('application/json')) {
@@ -115,9 +114,11 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(msg);
       }
       const json = await res.json();
-      modelUrl = json.model_url;
-      if (!modelUrl) throw new Error('no model_url in response');
-    } 
+
+      // ⚠️ **IMPORTANT**: prefix with `/api` so we hit the raw OBJ/GLB endpoint
+      if (!json.model_url) throw new Error('no model_url in response');
+      modelUrl = `/api${json.model_url}`;
+    }
     catch(err) {
       console.error('Conversion failed:', err);
       alert(`Error: ${err.message}`);
@@ -136,10 +137,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // switch to “View” tab
-    setTimeout(()=> tabs[2].click(), 300);
-    
-    // setup exports
-    const base = modelUrl.replace(/\.(?:obj|glb)$/, '');
+    setTimeout(() => tabs[2].click(), 300);
+
+    // setup exports (also goes through `/api/output/...`)
+    const base = modelUrl.replace(/^\s*\/api\/output\/(.+)\.(?:obj|glb)\s*$/, '/api/output/$1');
     setupExport({
       obj: `${base}.obj`,
       stl: `${base}.stl`,
@@ -152,49 +153,56 @@ document.addEventListener('DOMContentLoaded', () => {
   //
   // 4) PROGRESS ANIMATION
   //
-  function startProgress(){
+  function startProgress() {
     const txt = document.querySelector('.progress-text');
     const pct = document.querySelector('.progress-percent');
     const bar = document.querySelector('.progress-fill');
     let p = 0;
-    const iv = setInterval(()=>{
+    const iv = setInterval(() => {
       p = Math.min(95, p + Math.random()*10);
-      bar.style.width = p+'%';
-      pct.textContent = Math.floor(p)+'%';
-      txt.textContent = p<30?'Analyzing…':p<60?'Meshing…': 'Finalizing…';
+      bar.style.width = p + '%';
+      pct.textContent = Math.floor(p) + '%';
+      txt.textContent = p < 30 ? 'Analyzing…' : p < 60 ? 'Meshing…' : 'Finalizing…';
       document.querySelector('.progress-container').dataset.iv = iv;
-    },300);
+    }, 300);
   }
-  function finishProgress(){
+  function finishProgress() {
     const iv = +document.querySelector('.progress-container').dataset.iv;
     if (iv) clearInterval(iv);
-    document.querySelector('.progress-fill').style.width='100%';
-    document.querySelector('.progress-percent').textContent='100%';
-    document.querySelector('.progress-text').textContent='Done!';
-    document.querySelectorAll('.status-badge').forEach(b=>b.classList.add('complete'));
+    document.querySelector('.progress-fill').style.width = '100%';
+    document.querySelector('.progress-percent').textContent = '100%';
+    document.querySelector('.progress-text').textContent = 'Done!';
+    document.querySelectorAll('.status-badge').forEach(b => b.classList.add('complete'));
   }
 
   //
   // 5) EXPORT BUTTONS
   //
-  function setupExport(links){
-    document.querySelectorAll('.export-card').forEach(card=>{
+  function setupExport(links) {
+    document.querySelectorAll('.export-card').forEach(card => {
       const fmt = card.dataset.format;
       const btn = card.querySelector('.btn-export');
-      btn.onclick = ()=>{
-        if (!links[fmt]) return alert(`.${fmt} not available`);
+      btn.onclick = () => {
+        const url = links[fmt];
+        if (!url) return alert(`.${fmt} not available`);
+        // make sure we go via `/api/output`
+        const downloadUrl = url.startsWith('http') 
+          ? url 
+          : `${ORIGIN}${url}`;
         const a = document.createElement('a');
-        a.href = links[fmt].startsWith('http') ? links[fmt] : ORIGIN + links[fmt];
+        a.href = downloadUrl;
         a.download = `model.${fmt}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
       };
     });
-    document.getElementById('back-to-view-btn').onclick = ()=> tabs[2].click();
-    document.getElementById('new-project-btn').onclick = ()=>{
+
+    document.getElementById('back-to-view-btn').onclick = () => tabs[2].click();
+    document.getElementById('new-project-btn').onclick  = () => {
       if (!confirm('Start new project?')) return;
-      files = []; refreshList();
+      files = [];
+      refreshList();
       tabs[0].click();
       document.getElementById('model-viewer').innerHTML = `
         <div class="viewer-empty-state">
