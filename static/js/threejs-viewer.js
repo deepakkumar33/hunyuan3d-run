@@ -1,20 +1,21 @@
-// threejs-viewer.js
+// static/js/threejs-viewer.js
 import * as THREE        from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader }    from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader }     from 'three/examples/jsm/loaders/OBJLoader.js';
 
-let scene, camera, renderer, currentMesh, controls;
+let scene, camera, renderer, controls, currentMesh;
 
 export async function initThreeJSViewer() {
   const container = document.getElementById('model-viewer');
   if (!container) throw new Error('No #model-viewer element');
 
-  // clear and set up scene/camera/renderer
+  // Reset
   container.innerHTML = '';
+
+  // Scene & camera
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
-
   camera = new THREE.PerspectiveCamera(
     75,
     container.clientWidth / container.clientHeight,
@@ -23,15 +24,17 @@ export async function initThreeJSViewer() {
   );
   camera.position.set(0, 0, 2);
 
+  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
+  // Controls
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
-  // lights
+  // Lights
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const d1 = new THREE.DirectionalLight(0xffffff, 0.8);
   d1.position.set(1, 1, 1).normalize();
@@ -40,54 +43,61 @@ export async function initThreeJSViewer() {
   d2.position.set(-1, -1, -1).normalize();
   scene.add(d2);
 
-  window.addEventListener('resize', onWindowResize);
-  animate();
+  window.addEventListener('resize', _onWindowResize);
+  _animate();
 }
 
-function onWindowResize() {
-  const container = document.getElementById('model-viewer');
-  if (!container) return;
-  camera.aspect = container.clientWidth / container.clientHeight;
+function _onWindowResize() {
+  const c = document.getElementById('model-viewer');
+  if (!c) return;
+  camera.aspect = c.clientWidth / c.clientHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(container.clientWidth, container.clientHeight);
+  renderer.setSize(c.clientWidth, c.clientHeight);
 }
 
-function animate() {
-  requestAnimationFrame(animate);
+function _animate() {
+  requestAnimationFrame(_animate);
   controls.update();
   renderer.render(scene, camera);
 }
 
+/**
+ * Load a .glb/.gltf or .obj model from your Flask API.
+ * modelUrl should be the absolute URL (including /api/output/…).
+ */
 export async function loadModel(modelUrl) {
   if (!scene) {
     await initThreeJSViewer();
   }
 
   const container = document.getElementById('model-viewer');
-  // loading indicator
-  const loadingDiv = document.createElement('div');
-  loadingDiv.className = 'viewer-empty-state';
-  loadingDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
-  container.appendChild(loadingDiv);
+  // show loading
+  const loaderDiv = document.createElement('div');
+  loaderDiv.className = 'viewer-empty-state';
+  loaderDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
+  container.appendChild(loaderDiv);
 
-  // remove previous
-  if (currentMesh) scene.remove(currentMesh);
+  // remove old mesh
+  if (currentMesh) {
+    scene.remove(currentMesh);
+    currentMesh = null;
+  }
 
   // pick loader
   const ext = modelUrl.split('.').pop().toLowerCase();
-  let loader;
-  if (ext === 'obj') {
-    loader = new OBJLoader();
-  } else {
-    loader = new GLTFLoader();
-  }
+  const loader = ext === 'obj'
+    ? new OBJLoader()
+    : new GLTFLoader();
 
   loader.load(
     modelUrl,
-    gltfOrObj => {
-      container.removeChild(loadingDiv);
-      // GLTFLoader gives .scene, OBJLoader gives the object directly
-      currentMesh = gltfOrObj.scene || gltfOrObj;
+    asset => {
+      container.removeChild(loaderDiv);
+
+      // GLTFLoader returns { scene, ... }; OBJLoader returns the Group/object directly
+      currentMesh = asset.scene || asset;
+
+      // apply material + wireframe
       currentMesh.traverse(child => {
         if (child.isMesh) {
           child.material = new THREE.MeshPhongMaterial({
@@ -96,17 +106,26 @@ export async function loadModel(modelUrl) {
             shininess: 50,
             side: THREE.DoubleSide
           });
+          // optional: add a faint wireframe overlay
+          const wf = new THREE.LineSegments(
+            new THREE.WireframeGeometry(child.geometry),
+            new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
+          );
+          child.add(wf);
         }
       });
+
       scene.add(currentMesh);
 
-      // center & scale
+      // center & scale into view
       const box = new THREE.Box3().setFromObject(currentMesh);
       const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
+      const size   = box.getSize(new THREE.Vector3());
       currentMesh.position.sub(center);
-      const m = Math.max(size.x, size.y, size.z);
-      currentMesh.scale.setScalar(1.5 / m);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale  = 1.5 / maxDim;
+      currentMesh.scale.setScalar(scale);
+
       controls.update();
     },
     xhr => {
@@ -116,7 +135,7 @@ export async function loadModel(modelUrl) {
     },
     err => {
       console.error('Model load error', err);
-      container.removeChild(loadingDiv);
+      container.removeChild(loaderDiv);
       container.innerHTML = `
         <div class="viewer-empty-state">
           <i class="fas fa-exclamation-triangle"></i>
