@@ -61,52 +61,46 @@ function _animate() {
   renderer.render(scene, camera);
 }
 
-/**
- * Load a .glb/.gltf or .obj model from your Flask API.
- * modelUrl should be the absolute URL (including /api/output/…).
- */
 export async function loadModel(modelUrl) {
   if (!scene) {
     await initThreeJSViewer();
   }
 
   const container = document.getElementById('model-viewer');
-  // show loading
   const loaderDiv = document.createElement('div');
   loaderDiv.className = 'viewer-empty-state';
   loaderDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
   container.appendChild(loaderDiv);
 
-  // remove old mesh
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
   }
 
-  // pick loader
   const ext = modelUrl.split('.').pop().toLowerCase();
-  const loader = ext === 'obj'
-    ? new OBJLoader()
-    : new GLTFLoader();
+  const loader = ext === 'obj' ? new OBJLoader() : new GLTFLoader();
 
   loader.load(
     modelUrl,
     asset => {
       container.removeChild(loaderDiv);
-
-      // GLTFLoader returns { scene, ... }; OBJLoader returns the Group/object directly
       currentMesh = asset.scene || asset;
 
-      // apply material + wireframe
+      let hasValidGeometry = false;
+
       currentMesh.traverse(child => {
-        if (child.isMesh) {
+        if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+          const pos = child.geometry.attributes.position.array;
+          if (!Array.isArray(pos) || pos.length === 0 || pos.includes(NaN)) return;
+
+          hasValidGeometry = true;
           child.material = new THREE.MeshPhongMaterial({
-            color: 0x6a4cff,
+            color: 0x003366,
             specular: 0x555555,
             shininess: 50,
             side: THREE.DoubleSide
           });
-          // optional: add a faint wireframe overlay
+
           const wf = new THREE.LineSegments(
             new THREE.WireframeGeometry(child.geometry),
             new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
@@ -115,17 +109,30 @@ export async function loadModel(modelUrl) {
         }
       });
 
+      if (!hasValidGeometry) {
+        console.error('Model contains invalid or empty geometry');
+        container.innerHTML = `<div class="viewer-empty-state">
+          <i class="fas fa-exclamation-triangle"></i>
+          <p>Invalid or empty model geometry</p>
+        </div>`;
+        return;
+      }
+
       scene.add(currentMesh);
 
-      // center & scale into view
       const box = new THREE.Box3().setFromObject(currentMesh);
       const center = box.getCenter(new THREE.Vector3());
       const size   = box.getSize(new THREE.Vector3());
       currentMesh.position.sub(center);
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const scale  = 1.5 / maxDim;
-      currentMesh.scale.setScalar(scale);
 
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim === 0 || isNaN(maxDim)) {
+        console.error('Invalid bounding box dimensions');
+        return;
+      }
+
+      const scale = 1.5 / maxDim;
+      currentMesh.scale.setScalar(scale);
       controls.update();
     },
     xhr => {
