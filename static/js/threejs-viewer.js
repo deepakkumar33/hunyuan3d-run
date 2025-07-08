@@ -9,32 +9,21 @@ let scene, camera, renderer, controls, currentMesh;
 export async function initThreeJSViewer() {
   const container = document.getElementById('model-viewer');
   if (!container) throw new Error('No #model-viewer element');
-
-  // Reset
   container.innerHTML = '';
 
-  // Scene & camera
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
-  camera = new THREE.PerspectiveCamera(
-    75,
-    container.clientWidth / container.clientHeight,
-    0.1,
-    1000
-  );
+  camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
   camera.position.set(0, 0, 2);
 
-  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
-  // Controls
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
-  // Lights
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const d1 = new THREE.DirectionalLight(0xffffff, 0.8);
   d1.position.set(1, 1, 1).normalize();
@@ -91,9 +80,9 @@ export async function loadModel(modelUrl) {
       currentMesh.traverse(child => {
         if (child.isMesh && child.geometry && child.geometry.attributes.position) {
           const pos = child.geometry.attributes.position.array;
-          if (!Array.isArray(pos) || pos.length === 0 || pos.includes(NaN)) return;
-
+          if (!pos || pos.length === 0 || pos.includes(NaN)) return;
           hasValidGeometry = true;
+
           child.material = new THREE.MeshPhongMaterial({
             color: 0x003366,
             specular: 0x555555,
@@ -119,7 +108,6 @@ export async function loadModel(modelUrl) {
       }
 
       scene.add(currentMesh);
-
       const box = new THREE.Box3().setFromObject(currentMesh);
       const center = box.getCenter(new THREE.Vector3());
       const size   = box.getSize(new THREE.Vector3());
@@ -131,8 +119,7 @@ export async function loadModel(modelUrl) {
         return;
       }
 
-      const scale = 1.5 / maxDim;
-      currentMesh.scale.setScalar(scale);
+      currentMesh.scale.setScalar(1.5 / maxDim);
       controls.update();
     },
     xhr => {
@@ -143,11 +130,10 @@ export async function loadModel(modelUrl) {
     err => {
       console.error('Model load error', err);
       container.removeChild(loaderDiv);
-      container.innerHTML = `
-        <div class="viewer-empty-state">
-          <i class="fas fa-exclamation-triangle"></i>
-          <p>Failed to load 3D model</p>
-        </div>`;
+      container.innerHTML = `<div class="viewer-empty-state">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>Failed to load 3D model</p>
+      </div>`;
     }
   );
 }
