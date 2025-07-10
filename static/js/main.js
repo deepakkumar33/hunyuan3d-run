@@ -32,11 +32,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const clearBtn  = document.getElementById('clear-btn');
   let files = [];
 
-  // Prevent browser defaults
   ['dragenter','dragover','dragleave','drop'].forEach(evt =>
     dropZone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); })
   );
-  // Highlight on drag
   ['dragenter','dragover'].forEach(evt =>
     dropZone.addEventListener(evt, () => dropZone.classList.add('drag-over'))
   );
@@ -89,37 +87,25 @@ document.addEventListener('DOMContentLoaded', () => {
   //
   uploadBtn.addEventListener('click', async () => {
     if (!files.length) return;
+    tabs[1].click();  // go to Process
 
-    // switch to "Process" tab
-    tabs[1].click();
-
-    // build form
     const form = new FormData();
     files.forEach(f => form.append('images', f));
-
     startProgress();
-    let modelUrl;
 
+    let modelUrl;
     try {
       const res = await fetch(CONVERT_API, { method:'POST', body: form });
       if (!res.ok) {
         const ct = res.headers.get('Content-Type')||'';
-        let msg;
-        if (ct.includes('application/json')) {
-          const j = await res.json();
-          msg = j.error||JSON.stringify(j);
-        } else {
-          msg = await res.text();
-        }
+        let msg = await (ct.includes('application/json') ? res.json().then(j=>j.error||JSON.stringify(j)) : res.text());
         throw new Error(msg);
       }
       const json = await res.json();
-
-      // ⚠️ **IMPORTANT**: prefix with `/api` so we hit the raw OBJ/GLB endpoint
       if (!json.model_url) throw new Error('no model_url in response');
+      // prefix with /api so we hit the raw file endpoint
       modelUrl = `/api${json.model_url}`;
-    }
-    catch(err) {
+    } catch(err) {
       console.error('Conversion failed:', err);
       alert(`Error: ${err.message}`);
       tabs[0].click();
@@ -127,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // load 3D viewer
+    // load in our ThreeJS viewer
     try {
       const viewer = await import('/static/js/threejs-viewer.js');
       await viewer.loadModel(modelUrl);
@@ -136,11 +122,9 @@ document.addEventListener('DOMContentLoaded', () => {
       alert('Failed to initialize 3D viewer');
     }
 
-    // switch to "View" tab
-    setTimeout(() => tabs[2].click(), 300);
+    setTimeout(() => tabs[2].click(), 300); // switch to View
 
-    // setup exports (just strip the current extension and re-append)
-    // modelUrl === "/api/output/<uuid>.obj" or ".glb"
+    // setup Export links
     const base = modelUrl.replace(/\.(?:obj|glb)$/, '');
     setupExport({
       obj: `${base}.obj`,
@@ -151,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
     finishProgress();
   });
 
-  // give the "Refine Mesh" button some behavior (so it doesn't just sit there)
+  // refine stub
   document.getElementById('refine-btn').onclick = () => {
     alert('Mesh refinement is coming soon! 🔧');
   };
@@ -159,12 +143,12 @@ document.addEventListener('DOMContentLoaded', () => {
   //
   // 4) PROGRESS ANIMATION
   //
-  function startProgress() {
+  function startProgress(){
     const txt = document.querySelector('.progress-text');
     const pct = document.querySelector('.progress-percent');
     const bar = document.querySelector('.progress-fill');
     let p = 0;
-    const iv = setInterval(() => {
+    const iv = setInterval(()=>{
       p = Math.min(95, p + Math.random()*10);
       bar.style.width = p + '%';
       pct.textContent = Math.floor(p) + '%';
@@ -172,7 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelector('.progress-container').dataset.iv = iv;
     }, 300);
   }
-  function finishProgress() {
+  function finishProgress(){
     const iv = +document.querySelector('.progress-container').dataset.iv;
     if (iv) clearInterval(iv);
     document.querySelector('.progress-fill').style.width = '100%';
@@ -191,28 +175,27 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.onclick = () => {
         const url = links[fmt];
         if (!url) return alert(`.${fmt} not available`);
-        // make sure we go via `/api/output`
-        const downloadUrl = url.startsWith('http') 
-          ? url 
-          : `${ORIGIN}${url}`;
+        const downloadUrl = url.startsWith('http') ? url : `${ORIGIN}${url}`;
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = `model.${fmt}`;
+        a.download = `jewelry_model.${fmt}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
       };
     });
 
-    document.getElementById('back-to-view-btn').onclick = () => tabs[2].click();
-    document.getElementById('new-project-btn').onclick  = () => {
-      if (!confirm('Start new project?')) return;
-      files = [];
-      refreshList();
-      tabs[0].click();
+    document.getElementById('back-to-view-btn').onclick = () =>
+      document.querySelector('.app-nav a[href="#view-section"]').click();
+
+    document.getElementById('new-project-btn').onclick = () => {
+      if (!confirm('Start new project? All data will be lost.')) return;
+      files = []; refreshList();
+      document.querySelector('.app-nav a[href="#upload-section"]').click();
       document.getElementById('model-viewer').innerHTML = `
         <div class="viewer-empty-state">
-          <i class="fas fa-cube"></i><p>3D model will appear here</p>
+          <i class="fas fa-cube"></i>
+          <p>3D model will appear here</p>
         </div>`;
     };
   }
