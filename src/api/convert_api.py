@@ -54,12 +54,12 @@ class ConvertAPI:
         @self.api.route('/convert', methods=['POST'])
         def convert_2d_to_3d():
             """
-            Convert 2D image(s) to a 3D model (.obj) and return a model URL.
+            Convert 2D image(s) to a 3D model in multiple formats and return model URLs.
 
             Returns
             -------
             flask.Response
-                JSON with the model URL or error JSON.
+                JSON with the model URLs for different formats or error JSON.
             """
             if not request.files or 'images' not in request.files:
                 self.logger.warning('Missing images in request')
@@ -76,8 +76,6 @@ class ConvertAPI:
 
             # Generate unique model ID
             model_id = str(uuid.uuid4())
-            output_filename = f'{model_id}.obj'
-            output_path = os.path.join(output_dir, output_filename)
 
             # Save first image temporarily
             image_file = images[0]
@@ -99,21 +97,59 @@ class ConvertAPI:
                     os.remove(temp_path)
                     return jsonify({'error': 'Conversion failed.'}), 503
 
-                # Save the mesh to output file
-                output_format = self.config.get('output_format', 'obj')
-                mesh.export(output_path)
+                # Generate multiple formats
+                formats = ['obj', 'stl', 'ply']
+                generated_files = {}
+                primary_model_url = None
 
-                # Return model URL
-                model_url = f'/output/{output_filename}'
-                self.logger.info(f'2D to 3D conversion completed: {model_url}')
+                for fmt in formats:
+                    output_filename = f'{model_id}.{fmt}'
+                    output_path = os.path.join(output_dir, output_filename)
+                    
+                    try:
+                        mesh.export(output_path)
+                        file_url = f'/output/{output_filename}'
+                        generated_files[fmt] = file_url
+                        
+                        # Set primary model URL (prefer OBJ, then first successful format)
+                        if fmt == 'obj' or primary_model_url is None:
+                            primary_model_url = file_url
+                            
+                        self.logger.info(f'Generated {fmt.upper()} file: {output_filename}')
+                    except Exception as e:
+                        self.logger.warning(f'Failed to generate {fmt.upper()} format: {e}')
+                        # Continue with other formats even if one fails
+
+                # Check if at least one format was generated
+                if not generated_files:
+                    self.logger.error("No formats could be generated successfully")
+                    os.remove(temp_path)
+                    return jsonify({'error': 'Failed to generate any 3D model formats'}), 500
+
+                # Return model URLs
+                response_data = {
+                    'model_url': primary_model_url,
+                    'formats': generated_files,
+                    'model_id': model_id
+                }
+                
+                self.logger.info(f'2D to 3D conversion completed: {len(generated_files)} formats generated')
                 os.remove(temp_path)
-                return jsonify({'model_url': model_url})
+                return jsonify(response_data)
 
             except Exception as e:
                 self.logger.error(f'Error during 2D to 3D conversion process: {e}')
                 os.remove(temp_path)
-                if os.path.exists(output_path):
-                    os.remove(output_path)
+                
+                # Clean up any partially generated files
+                for fmt in ['obj', 'stl', 'ply']:
+                    output_path = os.path.join(output_dir, f'{model_id}.{fmt}')
+                    if os.path.exists(output_path):
+                        try:
+                            os.remove(output_path)
+                        except:
+                            pass
+                
                 return jsonify({'error': 'Failed to generate 3D model', 'details': str(e)}), 500
 
         @self.api.route('/output/<path:filename>')
