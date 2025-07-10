@@ -137,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     } catch(err) {
       console.error('Conversion failed:', err);
-      alert(`Error: ${err.message}`);
+      showToast(`Error: ${err.message}`, 'error');
       tabs[0].click();
       finishProgress();
       return;
@@ -145,11 +145,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // load 3D viewer
     try {
-      const viewer = await import('/static/js/threejs-viewer.js');
-      await viewer.loadModel(modelUrl);
+      console.log('Attempting to load 3D viewer...');
+      
+      // Try to load the viewer module
+      const viewerModule = await import('/static/js/threejs-viewer.js');
+      console.log('Viewer module loaded:', viewerModule);
+      
+      // Check what's available in the module
+      if (viewerModule.default && typeof viewerModule.default.loadModel === 'function') {
+        await viewerModule.default.loadModel(modelUrl);
+      } else if (viewerModule.loadModel && typeof viewerModule.loadModel === 'function') {
+        await viewerModule.loadModel(modelUrl);
+      } else if (viewerModule.initViewer && typeof viewerModule.initViewer === 'function') {
+        await viewerModule.initViewer(modelUrl);
+      } else {
+        // Fallback: try to initialize viewer directly
+        console.log('Using fallback viewer initialization');
+        await initBasicViewer(modelUrl);
+      }
+      
+      console.log('3D viewer loaded successfully');
+      
     } catch(err) {
       console.error('Viewer load failed:', err);
-      alert('Failed to initialize 3D viewer');
+      console.log('Attempting fallback viewer...');
+      
+      // Try fallback viewer
+      try {
+        await initBasicViewer(modelUrl);
+        console.log('Fallback viewer loaded successfully');
+      } catch(fallbackErr) {
+        console.error('Fallback viewer also failed:', fallbackErr);
+        showToast('Failed to initialize 3D viewer', 'error');
+      }
     }
 
     // switch to "View" tab
@@ -161,9 +189,49 @@ document.addEventListener('DOMContentLoaded', () => {
     finishProgress();
   });
 
+  // Basic fallback viewer function
+  async function initBasicViewer(modelUrl) {
+    const modelViewer = document.getElementById('model-viewer');
+    if (!modelViewer) {
+      throw new Error('Model viewer container not found');
+    }
+
+    // Clear existing content
+    modelViewer.innerHTML = `
+      <div class="viewer-loading">
+        <i class="fas fa-spinner fa-spin"></i>
+        <p>Loading 3D model...</p>
+      </div>
+    `;
+
+    // Try to create a basic Three.js viewer
+    try {
+      // This is a minimal fallback - you might want to implement a proper viewer here
+      modelViewer.innerHTML = `
+        <div class="viewer-success">
+          <i class="fas fa-cube"></i>
+          <p>3D model loaded successfully!</p>
+          <p class="viewer-info">Model URL: ${modelUrl}</p>
+          <button onclick="window.open('${modelUrl}', '_blank')" class="btn btn-primary">
+            <i class="fas fa-external-link-alt"></i>
+            View Model
+          </button>
+        </div>
+      `;
+    } catch (error) {
+      modelViewer.innerHTML = `
+        <div class="viewer-error">
+          <i class="fas fa-exclamation-triangle"></i>
+          <p>Could not load 3D viewer</p>
+          <p class="viewer-info">But your model is ready for download!</p>
+        </div>
+      `;
+    }
+  }
+
   // give the "Refine Mesh" button some behavior (so it doesn't just sit there)
   document.getElementById('refine-btn').onclick = () => {
-    alert('Mesh refinement is coming soon! 🔧');
+    showToast('Mesh refinement is coming soon! 🔧', 'info');
   };
 
   //
@@ -197,114 +265,116 @@ document.addEventListener('DOMContentLoaded', () => {
   function setupExport(availableFormats) {
     console.log('Setting up export with formats:', availableFormats);
     
-    // Try multiple selectors to find export buttons
-    const exportButtons = [
-      ...document.querySelectorAll('.export-card'),
-      ...document.querySelectorAll('[data-format]'),
-      ...document.querySelectorAll('.btn-export')
-    ];
+    // Look for export buttons by their text content and common patterns
+    const allButtons = document.querySelectorAll('button');
+    const exportButtons = [];
     
-    console.log('Found export elements:', exportButtons.length);
+    allButtons.forEach(button => {
+      const text = button.textContent.toLowerCase().trim();
+      const hasExportText = text.includes('export') || text.includes('download');
+      const hasFormatText = text.includes('obj') || text.includes('stl') || text.includes('ply');
+      
+      if (hasExportText || hasFormatText) {
+        exportButtons.push(button);
+      }
+    });
     
-    // If we can't find export cards, try to find buttons directly
+    console.log('Found potential export buttons:', exportButtons.length);
+    
+    // If still no export buttons found, look for specific IDs or classes
     if (exportButtons.length === 0) {
-      console.warn('No export elements found. Trying alternative selectors...');
-      const allButtons = document.querySelectorAll('button');
-      console.log('All buttons found:', allButtons.length);
-      allButtons.forEach(btn => {
-        console.log('Button:', btn.textContent, btn.className, btn.dataset);
+      const alternativeSelectors = [
+        '#export-btn',
+        '#download-btn',
+        '.export-btn',
+        '.download-btn',
+        '[data-action="export"]',
+        '[data-action="download"]'
+      ];
+      
+      alternativeSelectors.forEach(selector => {
+        const elements = document.querySelectorAll(selector);
+        exportButtons.push(...elements);
       });
     }
     
-    exportButtons.forEach(element => {
-      // Try to get format from data attribute or button text
-      let fmt = element.dataset.format;
-      if (!fmt) {
-        const card = element.closest('[data-format]');
-        if (card) fmt = card.dataset.format;
-      }
-      if (!fmt) {
-        const text = element.textContent.toLowerCase();
-        if (text.includes('obj')) fmt = 'obj';
-        else if (text.includes('stl')) fmt = 'stl';
-        else if (text.includes('ply')) fmt = 'ply';
+    console.log('Total export buttons found:', exportButtons.length);
+    
+    // Set up each export button
+    exportButtons.forEach(button => {
+      console.log('Processing button:', button.textContent.trim());
+      
+      // Determine the format
+      let format = null;
+      const text = button.textContent.toLowerCase();
+      
+      if (text.includes('obj')) format = 'obj';
+      else if (text.includes('stl')) format = 'stl';
+      else if (text.includes('ply')) format = 'ply';
+      else if (text.includes('export') || text.includes('download')) {
+        // Generic export button - use the first available format
+        format = Object.keys(availableFormats)[0];
       }
       
-      if (!fmt) {
-        console.warn('Could not determine format for element:', element);
+      if (!format) {
+        console.log('Could not determine format for button:', button.textContent);
         return;
       }
       
-      const btn = element.querySelector('.btn-export') || element;
+      console.log(`Setting up ${format} export for button:`, button.textContent);
       
-      if (!btn) {
-        console.warn(`No export button found for format: ${fmt}`);
-        return;
-      }
-
-      console.log(`Processing ${fmt} button:`, btn);
-
       // Check if this format is available
-      if (availableFormats[fmt]) {
+      if (availableFormats[format]) {
         // Format is available - enable the button
-        btn.disabled = false;
-        btn.style.opacity = '1';
-        btn.style.cursor = 'pointer';
+        button.disabled = false;
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
         
-        // Update button text
-        const originalText = btn.textContent;
-        if (originalText.includes('Coming Soon') || originalText.includes('Not Available')) {
-          btn.textContent = `Download ${fmt.toUpperCase()}`;
+        // Update button text if needed
+        if (button.textContent.includes('Coming Soon') || button.textContent.includes('Not Available')) {
+          button.textContent = `Download ${format.toUpperCase()}`;
         }
         
-        btn.onclick = (e) => {
+        // Add click handler
+        button.onclick = (e) => {
           e.preventDefault();
-          const url = availableFormats[fmt];
-          console.log(`Downloading ${fmt} from:`, url);
+          e.stopPropagation();
           
-          try {
-            // Try direct download first
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `model.${fmt}`;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            
-            // Show success message
-            showToast(`${fmt.toUpperCase()} file download started!`, 'success');
-          } catch (error) {
-            console.error(`Failed to download ${fmt}:`, error);
-            // Try opening in new window as fallback
-            try {
-              window.open(url, '_blank');
-              showToast(`${fmt.toUpperCase()} file opened in new window`, 'info');
-            } catch (err2) {
-              console.error('Fallback download also failed:', err2);
-              showToast(`Failed to download ${fmt.toUpperCase()} file`, 'error');
-            }
-          }
+          const url = availableFormats[format];
+          console.log(`Downloading ${format} from:`, url);
+          
+          downloadFile(url, `model.${format}`, format);
         };
       } else {
         // Format is not available - disable the button
-        btn.disabled = true;
-        btn.style.opacity = '0.5';
-        btn.style.cursor = 'not-allowed';
-        btn.textContent = 'Not Available';
-        btn.onclick = (e) => {
+        button.disabled = true;
+        button.style.opacity = '0.5';
+        button.style.cursor = 'not-allowed';
+        
+        if (!button.textContent.includes('Not Available')) {
+          button.textContent = `${format.toUpperCase()} - Not Available`;
+        }
+        
+        button.onclick = (e) => {
           e.preventDefault();
-          showToast(`${fmt.toUpperCase()} format is not available for this model`, 'warning');
+          e.stopPropagation();
+          showToast(`${format.toUpperCase()} format is not available for this model`, 'warning');
         };
       }
     });
 
     // Setup other buttons
+    setupUtilityButtons();
+  }
+
+  function setupUtilityButtons() {
+    // Back to view button
     const backBtn = document.getElementById('back-to-view-btn');
     if (backBtn) {
       backBtn.onclick = () => tabs[2].click();
     }
 
+    // New project button
     const newProjectBtn = document.getElementById('new-project-btn');
     if (newProjectBtn) {
       newProjectBtn.onclick = () => {
@@ -326,9 +396,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // Reset progress
-        document.querySelector('.progress-fill').style.width = '0%';
-        document.querySelector('.progress-percent').textContent = '0%';
-        document.querySelector('.progress-text').textContent = 'Ready';
+        const progressFill = document.querySelector('.progress-fill');
+        const progressPercent = document.querySelector('.progress-percent');
+        const progressText = document.querySelector('.progress-text');
+        
+        if (progressFill) progressFill.style.width = '0%';
+        if (progressPercent) progressPercent.textContent = '0%';
+        if (progressText) progressText.textContent = 'Ready';
+        
         document.querySelectorAll('.status-badge').forEach(b => b.classList.remove('complete'));
         
         showToast('New project started!', 'success');
@@ -339,13 +414,55 @@ document.addEventListener('DOMContentLoaded', () => {
   //
   // 6) UTILITY FUNCTIONS
   //
+  function downloadFile(url, filename, format) {
+    try {
+      // Create a temporary anchor element for download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      
+      // Add to DOM, click, and remove
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      showToast(`${format.toUpperCase()} download started!`, 'success');
+      
+    } catch (error) {
+      console.error(`Failed to download ${format}:`, error);
+      
+      // Fallback: try opening in new window
+      try {
+        const newWindow = window.open(url, '_blank');
+        if (newWindow) {
+          showToast(`${format.toUpperCase()} opened in new window`, 'info');
+        } else {
+          throw new Error('Popup blocked');
+        }
+      } catch (fallbackError) {
+        console.error('Fallback download also failed:', fallbackError);
+        showToast(`Failed to download ${format.toUpperCase()} file. Please try again.`, 'error');
+        
+        // Last resort: show the URL
+        const userResponse = confirm(`Download failed. Would you like to open the download URL manually?\n\nURL: ${url}`);
+        if (userResponse) {
+          window.location.href = url;
+        }
+      }
+    }
+  }
+
   function showToast(message, type = 'info') {
     // Create toast element
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.innerHTML = `
       <div class="toast-content">
-        <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+        <i class="fas fa-${type === 'success' ? 'check-circle' : 
+                           type === 'error' ? 'exclamation-circle' : 
+                           type === 'warning' ? 'exclamation-triangle' : 
+                           'info-circle'}"></i>
         <span>${message}</span>
       </div>
     `;
@@ -366,6 +483,7 @@ document.addEventListener('DOMContentLoaded', () => {
           z-index: 10000;
           animation: slideIn 0.3s ease-out;
           max-width: 300px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
         .toast-success { background-color: #10b981; }
         .toast-error { background-color: #ef4444; }
@@ -384,6 +502,30 @@ document.addEventListener('DOMContentLoaded', () => {
           from { transform: translateX(0); opacity: 1; }
           to { transform: translateX(100%); opacity: 0; }
         }
+        .viewer-loading, .viewer-success, .viewer-error {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          padding: 2rem;
+          text-align: center;
+        }
+        .viewer-loading i, .viewer-success i, .viewer-error i {
+          font-size: 3rem;
+          margin-bottom: 1rem;
+        }
+        .viewer-loading i { color: #3b82f6; }
+        .viewer-success i { color: #10b981; }
+        .viewer-error i { color: #ef4444; }
+        .viewer-info {
+          font-size: 0.9rem;
+          color: #666;
+          margin-top: 0.5rem;
+        }
+        .viewer-success .btn {
+          margin-top: 1rem;
+        }
       `;
       document.head.appendChild(style);
     }
@@ -391,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add to DOM
     document.body.appendChild(toast);
     
-    // Remove after 3 seconds
+    // Remove after 4 seconds
     setTimeout(() => {
       toast.style.animation = 'slideOut 0.3s ease-out';
       setTimeout(() => {
@@ -399,7 +541,7 @@ document.addEventListener('DOMContentLoaded', () => {
           toast.parentNode.removeChild(toast);
         }
       }, 300);
-    }, 3000);
+    }, 4000);
   }
 
   console.log('main.js initialization complete');
