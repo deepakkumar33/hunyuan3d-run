@@ -1,9 +1,16 @@
 // static/js/threejs-viewer.js
-// relies on global THREE, THREE.OrbitControls, THREE.GLTFLoader, THREE.OBJLoader
+// Uses global THREE (loaded from CDN)
+// No exports - this is a regular script, not a module
 
 let scene, camera, renderer, controls, currentMesh;
 
-export async function initThreeJSViewer() {
+// Make functions available globally so main.js can access them
+window.ThreeJSViewer = {
+  initThreeJSViewer: initThreeJSViewer,
+  loadModel: loadModel
+};
+
+async function initThreeJSViewer() {
   const container = document.getElementById('model-viewer');
   if (!container) throw new Error('No #model-viewer element');
   container.innerHTML = '';
@@ -24,6 +31,7 @@ export async function initThreeJSViewer() {
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
+  // Note: OrbitControls is included in the main three.min.js for r128
   controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
@@ -53,7 +61,7 @@ function _animate() {
   renderer.render(scene, camera);
 }
 
-export async function loadModel(modelUrl) {
+async function loadModel(modelUrl) {
   console.log('Loading model from:', modelUrl);
 
   if (!scene) {
@@ -73,10 +81,33 @@ export async function loadModel(modelUrl) {
 
   const ext = modelUrl.split('.').pop().toLowerCase();
   let loader = null;
+  
   if (ext === 'obj') {
-    loader = new THREE.OBJLoader();
+    // For OBJ files, use the built-in OBJLoader (if available in r128)
+    if (THREE.OBJLoader) {
+      loader = new THREE.OBJLoader();
+    } else {
+      console.error('OBJ loader not available in this THREE.js version');
+      container.removeChild(loaderDiv);
+      container.innerHTML = `<div class="viewer-empty-state">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>OBJ loader not available</p>
+      </div>`;
+      return;
+    }
   } else {
-    loader = new THREE.GLTFLoader();
+    // For other formats, try GLTFLoader
+    if (THREE.GLTFLoader) {
+      loader = new THREE.GLTFLoader();
+    } else {
+      console.error('GLTF loader not available in this THREE.js version');
+      container.removeChild(loaderDiv);
+      container.innerHTML = `<div class="viewer-empty-state">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>GLTF loader not available</p>
+      </div>`;
+      return;
+    }
   }
 
   loader.load(
