@@ -197,27 +197,73 @@ document.addEventListener('DOMContentLoaded', () => {
   function setupExport(availableFormats) {
     console.log('Setting up export with formats:', availableFormats);
     
-    document.querySelectorAll('.export-card').forEach(card => {
-      const fmt = card.dataset.format;
-      const btn = card.querySelector('.btn-export');
+    // Try multiple selectors to find export buttons
+    const exportButtons = [
+      ...document.querySelectorAll('.export-card'),
+      ...document.querySelectorAll('[data-format]'),
+      ...document.querySelectorAll('.btn-export')
+    ];
+    
+    console.log('Found export elements:', exportButtons.length);
+    
+    // If we can't find export cards, try to find buttons directly
+    if (exportButtons.length === 0) {
+      console.warn('No export elements found. Trying alternative selectors...');
+      const allButtons = document.querySelectorAll('button');
+      console.log('All buttons found:', allButtons.length);
+      allButtons.forEach(btn => {
+        console.log('Button:', btn.textContent, btn.className, btn.dataset);
+      });
+    }
+    
+    exportButtons.forEach(element => {
+      // Try to get format from data attribute or button text
+      let fmt = element.dataset.format;
+      if (!fmt) {
+        const card = element.closest('[data-format]');
+        if (card) fmt = card.dataset.format;
+      }
+      if (!fmt) {
+        const text = element.textContent.toLowerCase();
+        if (text.includes('obj')) fmt = 'obj';
+        else if (text.includes('stl')) fmt = 'stl';
+        else if (text.includes('ply')) fmt = 'ply';
+      }
+      
+      if (!fmt) {
+        console.warn('Could not determine format for element:', element);
+        return;
+      }
+      
+      const btn = element.querySelector('.btn-export') || element;
       
       if (!btn) {
         console.warn(`No export button found for format: ${fmt}`);
         return;
       }
 
+      console.log(`Processing ${fmt} button:`, btn);
+
       // Check if this format is available
       if (availableFormats[fmt]) {
         // Format is available - enable the button
         btn.disabled = false;
         btn.style.opacity = '1';
-        btn.textContent = btn.textContent.replace('Coming Soon', `Download ${fmt.toUpperCase()}`);
+        btn.style.cursor = 'pointer';
         
-        btn.onclick = () => {
+        // Update button text
+        const originalText = btn.textContent;
+        if (originalText.includes('Coming Soon') || originalText.includes('Not Available')) {
+          btn.textContent = `Download ${fmt.toUpperCase()}`;
+        }
+        
+        btn.onclick = (e) => {
+          e.preventDefault();
           const url = availableFormats[fmt];
           console.log(`Downloading ${fmt} from:`, url);
           
           try {
+            // Try direct download first
             const a = document.createElement('a');
             a.href = url;
             a.download = `model.${fmt}`;
@@ -230,15 +276,24 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(`${fmt.toUpperCase()} file download started!`, 'success');
           } catch (error) {
             console.error(`Failed to download ${fmt}:`, error);
-            showToast(`Failed to download ${fmt.toUpperCase()} file`, 'error');
+            // Try opening in new window as fallback
+            try {
+              window.open(url, '_blank');
+              showToast(`${fmt.toUpperCase()} file opened in new window`, 'info');
+            } catch (err2) {
+              console.error('Fallback download also failed:', err2);
+              showToast(`Failed to download ${fmt.toUpperCase()} file`, 'error');
+            }
           }
         };
       } else {
         // Format is not available - disable the button
         btn.disabled = true;
         btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
         btn.textContent = 'Not Available';
-        btn.onclick = () => {
+        btn.onclick = (e) => {
+          e.preventDefault();
           showToast(`${fmt.toUpperCase()} format is not available for this model`, 'warning');
         };
       }
