@@ -1,8 +1,5 @@
 // static/js/threejs-viewer.js
-import * as THREE        from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader }    from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { OBJLoader }     from 'three/examples/jsm/loaders/OBJLoader.js';
+// Browser-compatible version without ES6 imports
 
 let scene, camera, renderer, controls, currentMesh;
 
@@ -21,7 +18,8 @@ export async function initThreeJSViewer() {
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
-  controls = new OrbitControls(camera, renderer.domElement);
+  // Use THREE.OrbitControls instead of import
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -51,6 +49,8 @@ function _animate() {
 }
 
 export async function loadModel(modelUrl) {
+  console.log('Loading model from:', modelUrl);
+  
   if (!scene) {
     await initThreeJSViewer();
   }
@@ -67,11 +67,15 @@ export async function loadModel(modelUrl) {
   }
 
   const ext = modelUrl.split('.').pop().toLowerCase();
-  const loader = ext === 'obj' ? new OBJLoader() : new GLTFLoader();
+  console.log('Model extension:', ext);
+  
+  // Use THREE.OBJLoader and THREE.GLTFLoader
+  const loader = ext === 'obj' ? new THREE.OBJLoader() : new THREE.GLTFLoader();
 
   loader.load(
     modelUrl,
     asset => {
+      console.log('Model loaded successfully', asset);
       container.removeChild(loaderDiv);
       currentMesh = asset.scene || asset;
 
@@ -129,10 +133,12 @@ export async function loadModel(modelUrl) {
     },
     err => {
       console.error('Model load error', err);
-      container.removeChild(loaderDiv);
+      if (loaderDiv.parentNode) {
+        container.removeChild(loaderDiv);
+      }
       container.innerHTML = `<div class="viewer-empty-state">
         <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load 3D model</p>
+        <p>Failed to load 3D model: ${err.message || 'Unknown error'}</p>
       </div>`;
     }
   );
