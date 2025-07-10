@@ -243,6 +243,15 @@
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
 
+  <!-- THREE.js core -->
+  <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+  <!-- Add the controls + loaders to the global THREE namespace -->
+  <script src="https://unpkg.com/three@0.150.1/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://unpkg.com/three@0.150.1/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://unpkg.com/three@0.150.1/examples/js/loaders/OBJLoader.js"></script>
+  <!-- Only after all of those, load your viewer -->
+  <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
+
   <!-- Main app script (as module) -->
   <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
