@@ -5,21 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>eLUXE3D - 3D Jewelry Mesh Generator</title>
 
-  <!-- IMPORT MAP: map 'three' and its examples to unpkg URLs -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.150.1/build/three.module.js",
-      "three/examples/jsm/controls/OrbitControls.js":
-        "https://unpkg.com/three@0.150.1/examples/jsm/controls/OrbitControls.js",
-      "three/examples/jsm/loaders/GLTFLoader.js":
-        "https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js",
-      "three/examples/jsm/loaders/OBJLoader.js":
-        "https://unpkg.com/three@0.150.1/examples/jsm/loaders/OBJLoader.js"
-    }
-  }
-  </script>
-
   <!-- Your CSS -->
   <link
     rel="stylesheet"
@@ -243,13 +228,10 @@
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
 
-  <!-- THREE.js core -->
-  <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
-  <!-- Add the controls + loaders to the global THREE namespace -->
-  <script src="https://unpkg.com/three@0.150.1/examples/js/controls/OrbitControls.js"></script>
-  <script src="https://unpkg.com/three@0.150.1/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://unpkg.com/three@0.150.1/examples/js/loaders/OBJLoader.js"></script>
-  <!-- Only after all of those, load your viewer -->
+  <!-- THREE.js using CDN compatible version (r128 to avoid deprecation warnings) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  
+  <!-- Load your viewer script as regular script (not module) -->
   <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
 
   <!-- Main app script (as module) -->
