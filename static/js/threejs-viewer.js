@@ -1,5 +1,5 @@
 // static/js/threejs-viewer.js
-// Browser-compatible version without ES6 imports
+// relies on global THREE, THREE.OrbitControls, THREE.GLTFLoader, THREE.OBJLoader
 
 let scene, camera, renderer, controls, currentMesh;
 
@@ -10,7 +10,13 @@ export async function initThreeJSViewer() {
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
-  camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+
+  camera = new THREE.PerspectiveCamera(
+    75,
+    container.clientWidth / container.clientHeight,
+    0.1,
+    1000
+  );
   camera.position.set(0, 0, 2);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -18,7 +24,6 @@ export async function initThreeJSViewer() {
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
-  // Use THREE.OrbitControls instead of import
   controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
@@ -50,7 +55,7 @@ function _animate() {
 
 export async function loadModel(modelUrl) {
   console.log('Loading model from:', modelUrl);
-  
+
   if (!scene) {
     await initThreeJSViewer();
   }
@@ -67,20 +72,20 @@ export async function loadModel(modelUrl) {
   }
 
   const ext = modelUrl.split('.').pop().toLowerCase();
-  console.log('Model extension:', ext);
-  
-  // Use THREE.OBJLoader and THREE.GLTFLoader
-  const loader = ext === 'obj' ? new THREE.OBJLoader() : new THREE.GLTFLoader();
+  let loader = null;
+  if (ext === 'obj') {
+    loader = new THREE.OBJLoader();
+  } else {
+    loader = new THREE.GLTFLoader();
+  }
 
   loader.load(
     modelUrl,
     asset => {
-      console.log('Model loaded successfully', asset);
       container.removeChild(loaderDiv);
       currentMesh = asset.scene || asset;
 
       let hasValidGeometry = false;
-
       currentMesh.traverse(child => {
         if (child.isMesh && child.geometry && child.geometry.attributes.position) {
           const pos = child.geometry.attributes.position.array;
@@ -88,7 +93,7 @@ export async function loadModel(modelUrl) {
           hasValidGeometry = true;
 
           child.material = new THREE.MeshPhongMaterial({
-            color: 0xc0c0c0,
+            color: 0xc0c0c0,      // silver
             specular: 0x555555,
             shininess: 50,
             side: THREE.DoubleSide
@@ -133,12 +138,10 @@ export async function loadModel(modelUrl) {
     },
     err => {
       console.error('Model load error', err);
-      if (loaderDiv.parentNode) {
-        container.removeChild(loaderDiv);
-      }
+      if (loaderDiv.parentNode) container.removeChild(loaderDiv);
       container.innerHTML = `<div class="viewer-empty-state">
         <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load 3D model: ${err.message || 'Unknown error'}</p>
+        <p>Failed to load 3D model: ${err.message||'Unknown error'}</p>
       </div>`;
     }
   );
