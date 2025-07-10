@@ -84,7 +84,7 @@ export async function loadModel(modelUrl) {
           hasValidGeometry = true;
 
           child.material = new THREE.MeshPhongMaterial({
-            color: 0x003366,
+            color: 0xc0c0c0,
             specular: 0x555555,
             shininess: 50,
             side: THREE.DoubleSide
