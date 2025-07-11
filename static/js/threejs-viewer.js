@@ -31,10 +31,15 @@ async function initThreeJSViewer() {
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
-  // Check if OrbitControls is available (loaded separately)
-  if (typeof OrbitControls !== 'undefined') {
+  // Check if OrbitControls is available with multiple possible locations
+  if (typeof THREE.OrbitControls !== 'undefined') {
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    console.log('OrbitControls initialized via THREE.OrbitControls');
+  } else if (typeof OrbitControls !== 'undefined') {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    console.log('OrbitControls initialized via global OrbitControls');
   } else {
     console.warn('OrbitControls not available - camera controls disabled');
     // Basic fallback - allow manual camera positioning
@@ -91,18 +96,26 @@ async function loadModel(modelUrl) {
   
   try {
     if (ext === 'obj') {
-      // Check if OBJLoader is available
-      if (typeof OBJLoader !== 'undefined') {
+      // Check if OBJLoader is available with multiple possible locations
+      if (typeof THREE.OBJLoader !== 'undefined') {
+        loader = new THREE.OBJLoader();
+        console.log('Using THREE.OBJLoader');
+      } else if (typeof OBJLoader !== 'undefined') {
         loader = new OBJLoader();
+        console.log('Using global OBJLoader');
       } else {
-        throw new Error('OBJLoader not available. Please include the OBJLoader script.');
+        throw new Error('OBJLoader not available. Please check if the OBJLoader script is loaded correctly.');
       }
     } else if (ext === 'gltf' || ext === 'glb') {
-      // Check if GLTFLoader is available
-      if (typeof GLTFLoader !== 'undefined') {
+      // Check if GLTFLoader is available with multiple possible locations
+      if (typeof THREE.GLTFLoader !== 'undefined') {
+        loader = new THREE.GLTFLoader();
+        console.log('Using THREE.GLTFLoader');
+      } else if (typeof GLTFLoader !== 'undefined') {
         loader = new GLTFLoader();
+        console.log('Using global GLTFLoader');
       } else {
-        throw new Error('GLTFLoader not available. Please include the GLTFLoader script.');
+        throw new Error('GLTFLoader not available. Please check if the GLTFLoader script is loaded correctly.');
       }
     } else {
       throw new Error(`Unsupported file format: ${ext}`);
