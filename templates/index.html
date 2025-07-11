@@ -228,13 +228,23 @@
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
 
-  <!-- THREE.js using CDN compatible version (r128 to avoid deprecation warnings) -->
+  <!-- THREE.js scripts - LOAD IN THIS EXACT ORDER -->
+  <!-- 1. Core Three.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   
-  <!-- Load your viewer script as regular script (not module) -->
+  <!-- 2. OrbitControls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/controls/OrbitControls.js"></script>
+  
+  <!-- 3. OBJ Loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/loaders/OBJLoader.js"></script>
+  
+  <!-- 4. GLTF Loader (optional, for future use) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/loaders/GLTFLoader.js"></script>
+  
+  <!-- 5. Your viewer script -->
   <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
 
-  <!-- Main app script (as module) -->
-  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <!-- 6. Main app script -->
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
