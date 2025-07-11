@@ -31,10 +31,17 @@ async function initThreeJSViewer() {
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
 
-  // Note: OrbitControls is included in the main three.min.js for r128
-  controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
+  // Check if OrbitControls is available (loaded separately)
+  if (typeof OrbitControls !== 'undefined') {
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+  } else {
+    console.warn('OrbitControls not available - camera controls disabled');
+    // Basic fallback - allow manual camera positioning
+    controls = null;
+  }
 
+  // Lighting setup
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const d1 = new THREE.DirectionalLight(0xffffff, 0.8);
   d1.position.set(1, 1, 1).normalize();
@@ -57,7 +64,7 @@ function _onWindowResize() {
 
 function _animate() {
   requestAnimationFrame(_animate);
-  controls.update();
+  if (controls) controls.update();
   renderer.render(scene, camera);
 }
 
@@ -70,7 +77,7 @@ async function loadModel(modelUrl) {
 
   const container = document.getElementById('model-viewer');
   const loaderDiv = document.createElement('div');
-  loaderDiv.className = 'viewer-empty-state';
+  loaderDiv.className = 'viewer-loading';
   loaderDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
   container.appendChild(loaderDiv);
 
@@ -82,98 +89,124 @@ async function loadModel(modelUrl) {
   const ext = modelUrl.split('.').pop().toLowerCase();
   let loader = null;
   
-  if (ext === 'obj') {
-    // For OBJ files, use the built-in OBJLoader (if available in r128)
-    if (THREE.OBJLoader) {
-      loader = new THREE.OBJLoader();
+  try {
+    if (ext === 'obj') {
+      // Check if OBJLoader is available
+      if (typeof OBJLoader !== 'undefined') {
+        loader = new OBJLoader();
+      } else {
+        throw new Error('OBJLoader not available. Please include the OBJLoader script.');
+      }
+    } else if (ext === 'gltf' || ext === 'glb') {
+      // Check if GLTFLoader is available
+      if (typeof GLTFLoader !== 'undefined') {
+        loader = new GLTFLoader();
+      } else {
+        throw new Error('GLTFLoader not available. Please include the GLTFLoader script.');
+      }
     } else {
-      console.error('OBJ loader not available in this THREE.js version');
-      container.removeChild(loaderDiv);
-      container.innerHTML = `<div class="viewer-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>OBJ loader not available</p>
-      </div>`;
-      return;
+      throw new Error(`Unsupported file format: ${ext}`);
     }
-  } else {
-    // For other formats, try GLTFLoader
-    if (THREE.GLTFLoader) {
-      loader = new THREE.GLTFLoader();
-    } else {
-      console.error('GLTF loader not available in this THREE.js version');
-      container.removeChild(loaderDiv);
-      container.innerHTML = `<div class="viewer-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>GLTF loader not available</p>
-      </div>`;
-      return;
-    }
-  }
 
-  loader.load(
-    modelUrl,
-    asset => {
-      container.removeChild(loaderDiv);
-      currentMesh = asset.scene || asset;
+    // Load the model
+    await new Promise((resolve, reject) => {
+      loader.load(
+        modelUrl,
+        (asset) => {
+          try {
+            container.removeChild(loaderDiv);
+            
+            // Handle different loader return types
+            if (ext === 'gltf' || ext === 'glb') {
+              currentMesh = asset.scene;
+            } else {
+              currentMesh = asset;
+            }
 
-      let hasValidGeometry = false;
-      currentMesh.traverse(child => {
-        if (child.isMesh && child.geometry && child.geometry.attributes.position) {
-          const pos = child.geometry.attributes.position.array;
-          if (!pos || pos.length === 0 || pos.includes(NaN)) return;
-          hasValidGeometry = true;
+            let hasValidGeometry = false;
+            
+            currentMesh.traverse(child => {
+              if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+                const pos = child.geometry.attributes.position.array;
+                if (!pos || pos.length === 0 || pos.some(val => isNaN(val))) {
+                  console.warn('Invalid geometry data found');
+                  return;
+                }
+                hasValidGeometry = true;
 
-          child.material = new THREE.MeshPhongMaterial({
-            color: 0xc0c0c0,      // silver
-            specular: 0x555555,
-            shininess: 50,
-            side: THREE.DoubleSide
-          });
+                // Apply material
+                child.material = new THREE.MeshPhongMaterial({
+                  color: 0xc0c0c0,
+                  specular: 0x555555,
+                  shininess: 50,
+                  side: THREE.DoubleSide
+                });
 
-          const wf = new THREE.LineSegments(
-            new THREE.WireframeGeometry(child.geometry),
-            new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
-          );
-          child.add(wf);
+                // Add wireframe
+                const wireframe = new THREE.LineSegments(
+                  new THREE.WireframeGeometry(child.geometry),
+                  new THREE.LineBasicMaterial({ 
+                    color: 0x000000, 
+                    transparent: true, 
+                    opacity: 0.25 
+                  })
+                );
+                child.add(wireframe);
+              }
+            });
+
+            if (!hasValidGeometry) {
+              throw new Error('Model contains no valid geometry');
+            }
+
+            scene.add(currentMesh);
+            
+            // Center and scale the model
+            const box = new THREE.Box3().setFromObject(currentMesh);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            
+            currentMesh.position.sub(center);
+            
+            const maxDim = Math.max(size.x, size.y, size.z);
+            if (maxDim === 0 || isNaN(maxDim)) {
+              throw new Error('Invalid model dimensions');
+            }
+            
+            currentMesh.scale.setScalar(1.5 / maxDim);
+            
+            if (controls) controls.update();
+            
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        },
+        (xhr) => {
+          if (xhr.total) {
+            const progress = (xhr.loaded / xhr.total * 100).toFixed(2);
+            console.log(`Model loading progress: ${progress}%`);
+          }
+        },
+        (error) => {
+          reject(error);
         }
-      });
+      );
+    });
 
-      if (!hasValidGeometry) {
-        console.error('Model contains invalid or empty geometry');
-        container.innerHTML = `<div class="viewer-empty-state">
-          <i class="fas fa-exclamation-triangle"></i>
-          <p>Invalid or empty model geometry</p>
-        </div>`;
-        return;
-      }
-
-      scene.add(currentMesh);
-      const box = new THREE.Box3().setFromObject(currentMesh);
-      const center = box.getCenter(new THREE.Vector3());
-      const size   = box.getSize(new THREE.Vector3());
-      currentMesh.position.sub(center);
-
-      const maxDim = Math.max(size.x, size.y, size.z);
-      if (maxDim === 0 || isNaN(maxDim)) {
-        console.error('Invalid bounding box dimensions');
-        return;
-      }
-
-      currentMesh.scale.setScalar(1.5 / maxDim);
-      controls.update();
-    },
-    xhr => {
-      if (xhr.total) {
-        console.log(`Model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-      }
-    },
-    err => {
-      console.error('Model load error', err);
-      if (loaderDiv.parentNode) container.removeChild(loaderDiv);
-      container.innerHTML = `<div class="viewer-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load 3D model: ${err.message||'Unknown error'}</p>
-      </div>`;
+  } catch (error) {
+    console.error('Model load error:', error);
+    
+    if (loaderDiv.parentNode) {
+      container.removeChild(loaderDiv);
     }
-  );
+    
+    container.innerHTML = `
+      <div class="viewer-error">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>Failed to load 3D model</p>
+        <p class="viewer-info">${error.message}</p>
+      </div>
+    `;
+  }
 }
