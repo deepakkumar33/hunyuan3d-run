@@ -308,46 +308,61 @@ document.addEventListener('DOMContentLoaded', () => {
     addExportCardStyles();
   }
 
-  function downloadModel(format) {
-    if (!currentModelData || !currentModelData.exportFormats[format]) {
-      showToast(`${format.toUpperCase()} format is not available`, 'error');
-      return;
+  // Replace the downloadModel function in main.js with this improved version
+async function downloadModel(format) {
+  if (!currentModelData || !currentModelData.exportFormats[format]) {
+    showToast(`${format.toUpperCase()} format is not available`, 'error');
+    return;
+  }
+
+  const url = currentModelData.exportFormats[format];
+  const filename = `jewelry_model.${format}`;
+
+  try {
+    showToast(`Downloading ${format.toUpperCase()}...`, 'info');
+    
+    // Use fetch to download the file
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-
-    const url = currentModelData.exportFormats[format];
-    const filename = `jewelry_model.${format}`;
-
+    
+    // Get the blob data
+    const blob = await response.blob();
+    
+    // Create blob URL
+    const blobUrl = window.URL.createObjectURL(blob);
+    
+    // Create download link
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    
+    // Trigger download
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // Clean up blob URL
+    window.URL.revokeObjectURL(blobUrl);
+    
+    showToast(`${format.toUpperCase()} downloaded successfully!`, 'success');
+    
+  } catch (error) {
+    console.error(`Download failed for ${format}:`, error);
+    showToast(`Download failed: ${error.message}`, 'error');
+    
+    // Fallback: try direct link
     try {
-      // Create a temporary anchor element for download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.style.display = 'none';
-      
-      // Add to DOM, click, and remove
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      showToast(`${format.toUpperCase()} download started!`, 'success');
-      
-    } catch (error) {
-      console.error(`Failed to download ${format}:`, error);
-      
-      // Fallback: try opening in new window
-      try {
-        const newWindow = window.open(url, '_blank');
-        if (newWindow) {
-          showToast(`${format.toUpperCase()} opened in new window`, 'info');
-        } else {
-          throw new Error('Popup blocked');
-        }
-      } catch (fallbackError) {
-        console.error('Fallback download also failed:', fallbackError);
-        showToast(`Failed to download ${format.toUpperCase()} file. Please try again.`, 'error');
-      }
+      window.open(url, '_blank');
+      showToast(`${format.toUpperCase()} opened in new tab`, 'info');
+    } catch (fallbackError) {
+      console.error('Fallback also failed:', fallbackError);
     }
   }
+}
 
   //
   // 7) EXPORT SECTION UTILITY BUTTONS
