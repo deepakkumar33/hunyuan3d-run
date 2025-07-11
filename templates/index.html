@@ -191,50 +191,181 @@
         </div>
       </section>
 
-      <!-- Export Section -->
-      <section id="export-section" class="app-section">
-        <h2>Export 3D Model</h2>
-        <p class="section-description">
-          Export your 3D jewelry model in various formats for 3D printing or further editing.
-        </p>
-        <div class="export-options">
-          <!-- STL, OBJ, PLY cards… -->
-        </div>
-        <div class="export-settings">
-          <!-- export settings… -->
-        </div>
-        <div class="action-buttons">
-          <button class="btn btn-secondary" id="back-to-view-btn">
-            <i class="fas fa-arrow-left"></i> Back to Viewer
-          </button>
-          <button class="btn btn-primary" id="new-project-btn">
-            <i class="fas fa-plus"></i> New Project
-          </button>
-        </div>
-      </section>
-    </main>
+      <!-- Updated Export Section for index.html -->
+<!-- Replace the existing export section with this: -->
 
-    <footer class="app-footer">
-      <div class="footer-left">
-        <p>eLUXE3D - Version 1.0</p>
-      </div>
-      <div class="footer-right">
-        <p>© 2025 eLUXE3D. All rights reserved.</p>
-      </div>
-    </footer>
-  </div>
-
-  <!-- Particles.js -->
-  <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
-  <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
-
-  <!-- THREE.js using CDN compatible version (r128 to avoid deprecation warnings) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Export Section -->
+<section id="export-section" class="app-section">
+  <h2>Export 3D Model</h2>
+  <p class="section-description">
+    Export your 3D jewelry model in various formats for 3D printing or further editing.
+  </p>
   
-  <!-- Load your viewer script as regular script (not module) -->
-  <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
+  <div class="export-options">
+    <!-- Export format cards will be dynamically generated here -->
+  </div>
+  
+  <div class="export-settings">
+    <div class="settings-card">
+      <h3><i class="fas fa-cog"></i> Export Settings</h3>
+      <div class="settings-grid">
+        <div class="setting-item">
+          <label for="export-quality">Quality</label>
+          <select id="export-quality">
+            <option value="high">High (Recommended)</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low (Faster)</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="export-scale">Scale</label>
+          <input type="range" id="export-scale" min="0.1" max="2" step="0.1" value="1">
+          <span class="scale-value">1.0x</span>
+        </div>
+        <div class="setting-item">
+          <label for="export-units">Units</label>
+          <select id="export-units">
+            <option value="mm">Millimeters</option>
+            <option value="cm">Centimeters</option>
+            <option value="in">Inches</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    
+    <div class="export-info">
+      <h4><i class="fas fa-info-circle"></i> Format Information</h4>
+      <div class="format-info-grid">
+        <div class="format-info-item">
+          <strong>OBJ Format:</strong>
+          <p>Universal 3D format, great for most CAD software and 3D modeling applications.</p>
+        </div>
+        <div class="format-info-item">
+          <strong>STL Format:</strong>
+          <p>Industry standard for 3D printing. Perfect for sending to jewelry manufacturers.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="action-buttons">
+    <button class="btn btn-secondary" id="back-to-view-btn">
+      <i class="fas fa-arrow-left"></i> Back to Viewer
+    </button>
+    <button class="btn btn-primary" id="new-project-btn">
+      <i class="fas fa-plus"></i> New Project
+    </button>
+  </div>
+</section>
 
-  <!-- Main app script (as module) -->
-  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
-</body>
-</html>
+<!-- Add these styles to your CSS file or in a <style> tag -->
+<style>
+.export-settings {
+  margin: 2rem 0;
+}
+
+.settings-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+}
+
+.settings-card h3 {
+  margin: 0 0 1rem 0;
+  color: #1f2937;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.setting-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setting-item label {
+  font-weight: 500;
+  color: #374151;
+  font-size: 0.9rem;
+}
+
+.setting-item select,
+.setting-item input[type="range"] {
+  padding: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.setting-item input[type="range"] {
+  padding: 0;
+}
+
+.scale-value {
+  font-size: 0.8rem;
+  color: #6b7280;
+  text-align: center;
+}
+
+.export-info {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 1.5rem;
+  border-left: 4px solid #3b82f6;
+}
+
+.export-info h4 {
+  margin: 0 0 1rem 0;
+  color: #1f2937;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.format-info-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.format-info-item {
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.format-info-item strong {
+  color: #1f2937;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.format-info-item p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 768px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .export-options {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
