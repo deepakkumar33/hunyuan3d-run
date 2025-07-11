@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const ORIGIN      = window.location.origin;
   const CONVERT_API = `${ORIGIN}/api/convert`;
 
+  // Global variables for model data
+  let currentModelData = null;
+
   //
   // 1) NAVIGATION
   //
@@ -133,6 +136,21 @@ document.addEventListener('DOMContentLoaded', () => {
         exportFormats[extension] = modelUrl;
       }
 
+      // Ensure both OBJ and STL formats are available (add defaults if missing)
+      if (!exportFormats.obj) {
+        exportFormats.obj = modelUrl;
+      }
+      if (!exportFormats.stl) {
+        // If STL is not provided by backend, we'll show it as unavailable
+        exportFormats.stl = null;
+      }
+
+      // Store model data globally
+      currentModelData = {
+        modelUrl: modelUrl,
+        exportFormats: exportFormats
+      };
+
       console.log('Available export formats:', exportFormats);
 
     } catch(err) {
@@ -143,278 +161,162 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // load 3D viewer
-    try {
-      console.log('Attempting to load 3D viewer...');
-      
-      // Try to load the viewer module
-      const viewerModule = await import('/static/js/threejs-viewer.js');
-      console.log('Viewer module loaded:', viewerModule);
-      
-      // Check what's available in the module
-      if (viewerModule.default && typeof viewerModule.default.loadModel === 'function') {
-        await viewerModule.default.loadModel(modelUrl);
-      } else if (viewerModule.loadModel && typeof viewerModule.loadModel === 'function') {
-        await viewerModule.loadModel(modelUrl);
-      } else if (viewerModule.initViewer && typeof viewerModule.initViewer === 'function') {
-        await viewerModule.initViewer(modelUrl);
-      } else {
-        // Fallback: try to initialize viewer directly
-        console.log('Using fallback viewer initialization');
-        await initBasicViewer(modelUrl);
-      }
-      
-      console.log('3D viewer loaded successfully');
-      
-    } catch(err) {
-      console.error('Viewer load failed:', err);
-      console.log('Attempting fallback viewer...');
-      
-      // Try fallback viewer
-      try {
-        await initBasicViewer(modelUrl);
-        console.log('Fallback viewer loaded successfully');
-      } catch(fallbackErr) {
-        console.error('Fallback viewer also failed:', fallbackErr);
-        showToast('Failed to initialize 3D viewer', 'error');
-      }
-    }
-
-    // switch to "View" tab
-    setTimeout(() => tabs[2].click(), 300);
-
-    // setup exports with available formats
-    setupExport(exportFormats);
-
     finishProgress();
+    
+    // Wait a moment, then switch to View tab
+    setTimeout(() => {
+      tabs[2].click();
+      initializeViewer();
+    }, 500);
   });
 
-  // Basic fallback viewer function
-  async function initBasicViewer(modelUrl) {
-    const modelViewer = document.getElementById('model-viewer');
-    if (!modelViewer) {
-      throw new Error('Model viewer container not found');
+  //
+  // 4) INITIALIZE 3D VIEWER
+  //
+  async function initializeViewer() {
+    if (!currentModelData) {
+      console.error('No model data available');
+      return;
     }
 
-    // Clear existing content
-    modelViewer.innerHTML = `
-      <div class="viewer-loading">
-        <i class="fas fa-spinner fa-spin"></i>
-        <p>Loading 3D model...</p>
-      </div>
-    `;
-
-    // Try to create a basic Three.js viewer
     try {
-      // This is a minimal fallback - you might want to implement a proper viewer here
-      modelViewer.innerHTML = `
-        <div class="viewer-success">
-          <i class="fas fa-cube"></i>
-          <p>3D model loaded successfully!</p>
-          <p class="viewer-info">Model URL: ${modelUrl}</p>
-          <button onclick="window.open('${modelUrl}', '_blank')" class="btn btn-primary">
-            <i class="fas fa-external-link-alt"></i>
-            View Model
-          </button>
-        </div>
-      `;
-    } catch (error) {
-      modelViewer.innerHTML = `
-        <div class="viewer-error">
-          <i class="fas fa-exclamation-triangle"></i>
-          <p>Could not load 3D viewer</p>
-          <p class="viewer-info">But your model is ready for download!</p>
-        </div>
-      `;
+      console.log('Initializing 3D viewer...');
+      
+      // Use the global ThreeJSViewer object
+      if (window.ThreeJSViewer && window.ThreeJSViewer.loadModel) {
+        await window.ThreeJSViewer.loadModel(currentModelData.modelUrl);
+        console.log('3D viewer loaded successfully');
+      } else {
+        console.error('ThreeJSViewer not available');
+        showFallbackViewer();
+      }
+      
+    } catch(err) {
+      console.error('Viewer initialization failed:', err);
+      showFallbackViewer();
     }
   }
 
-  // give the "Refine Mesh" button some behavior (so it doesn't just sit there)
+  function showFallbackViewer() {
+    const modelViewer = document.getElementById('model-viewer');
+    if (!modelViewer) return;
+    
+    modelViewer.innerHTML = `
+      <div class="viewer-success">
+        <i class="fas fa-cube"></i>
+        <p>3D model generated successfully!</p>
+        <p class="viewer-info">3D viewer is not available, but you can export your model.</p>
+        <button onclick="document.querySelector('[href=\\'#export-section\\']').click()" class="btn btn-primary">
+          <i class="fas fa-download"></i>
+          Go to Export
+        </button>
+      </div>
+    `;
+  }
+
+  //
+  // 5) VIEW SECTION BUTTONS
+  //
+  // Refine button (placeholder functionality)
   document.getElementById('refine-btn').onclick = () => {
     showToast('Mesh refinement is coming soon! 🔧', 'info');
   };
 
-  //
-  // 4) PROGRESS ANIMATION
-  //
-  function startProgress() {
-    const txt = document.querySelector('.progress-text');
-    const pct = document.querySelector('.progress-percent');
-    const bar = document.querySelector('.progress-fill');
-    let p = 0;
-    const iv = setInterval(() => {
-      p = Math.min(95, p + Math.random()*10);
-      bar.style.width = p + '%';
-      pct.textContent = Math.floor(p) + '%';
-      txt.textContent = p < 30 ? 'Analyzing…' : p < 60 ? 'Meshing…' : 'Finalizing…';
-      document.querySelector('.progress-container').dataset.iv = iv;
-    }, 300);
-  }
-  function finishProgress() {
-    const iv = +document.querySelector('.progress-container').dataset.iv;
-    if (iv) clearInterval(iv);
-    document.querySelector('.progress-fill').style.width = '100%';
-    document.querySelector('.progress-percent').textContent = '100%';
-    document.querySelector('.progress-text').textContent = 'Done!';
-    document.querySelectorAll('.status-badge').forEach(b => b.classList.add('complete'));
-  }
+  // Export button in view section - should navigate to export section
+  document.getElementById('export-btn').onclick = () => {
+    if (!currentModelData) {
+      showToast('No model available for export', 'error');
+      return;
+    }
+    
+    // Switch to export section
+    tabs[3].click();
+    setupExportSection();
+  };
 
   //
-  // 5) EXPORT BUTTONS
+  // 6) EXPORT SECTION SETUP
   //
-  function setupExport(availableFormats) {
-    console.log('Setting up export with formats:', availableFormats);
-    
-    // Look for export buttons by their text content and common patterns
-    const allButtons = document.querySelectorAll('button');
-    const exportButtons = [];
-    
-    allButtons.forEach(button => {
-      const text = button.textContent.toLowerCase().trim();
-      const hasExportText = text.includes('export') || text.includes('download');
-      const hasFormatText = text.includes('obj') || text.includes('stl') || text.includes('ply');
-      
-      if (hasExportText || hasFormatText) {
-        exportButtons.push(button);
+  function setupExportSection() {
+    if (!currentModelData) {
+      console.error('No model data available for export');
+      return;
+    }
+
+    const exportOptionsContainer = document.querySelector('.export-options');
+    if (!exportOptionsContainer) {
+      console.error('Export options container not found');
+      return;
+    }
+
+    // Clear existing content
+    exportOptionsContainer.innerHTML = '';
+
+    // Create export format cards
+    const formats = [
+      {
+        name: 'OBJ',
+        description: 'Standard 3D format, widely supported',
+        icon: 'fas fa-cube',
+        extension: 'obj',
+        available: !!currentModelData.exportFormats.obj
+      },
+      {
+        name: 'STL',
+        description: 'Perfect for 3D printing',
+        icon: 'fas fa-print',
+        extension: 'stl',
+        available: !!currentModelData.exportFormats.stl
       }
-    });
-    
-    console.log('Found potential export buttons:', exportButtons.length);
-    
-    // If still no export buttons found, look for specific IDs or classes
-    if (exportButtons.length === 0) {
-      const alternativeSelectors = [
-        '#export-btn',
-        '#download-btn',
-        '.export-btn',
-        '.download-btn',
-        '[data-action="export"]',
-        '[data-action="download"]'
-      ];
+    ];
+
+    formats.forEach(format => {
+      const card = document.createElement('div');
+      card.className = `export-card ${format.available ? 'available' : 'unavailable'}`;
       
-      alternativeSelectors.forEach(selector => {
-        const elements = document.querySelectorAll(selector);
-        exportButtons.push(...elements);
+      card.innerHTML = `
+        <div class="export-card-header">
+          <i class="${format.icon}"></i>
+          <h3>${format.name}</h3>
+          ${format.available ? '<span class="status-badge available">Available</span>' : '<span class="status-badge unavailable">Not Available</span>'}
+        </div>
+        <div class="export-card-body">
+          <p>${format.description}</p>
+          <div class="export-card-actions">
+            <button class="btn ${format.available ? 'btn-primary' : 'btn-disabled'}" 
+                    data-format="${format.extension}"
+                    ${format.available ? '' : 'disabled'}>
+              <i class="fas fa-download"></i>
+              Download ${format.name}
+            </button>
+          </div>
+        </div>
+      `;
+
+      exportOptionsContainer.appendChild(card);
+    });
+
+    // Add event listeners to download buttons
+    document.querySelectorAll('.export-card button[data-format]').forEach(button => {
+      button.addEventListener('click', (e) => {
+        const format = e.target.getAttribute('data-format');
+        downloadModel(format);
       });
-    }
-    
-    console.log('Total export buttons found:', exportButtons.length);
-    
-    // Set up each export button
-    exportButtons.forEach(button => {
-      console.log('Processing button:', button.textContent.trim());
-      
-      // Determine the format
-      let format = null;
-      const text = button.textContent.toLowerCase();
-      
-      if (text.includes('obj')) format = 'obj';
-      else if (text.includes('stl')) format = 'stl';
-      else if (text.includes('ply')) format = 'ply';
-      else if (text.includes('export') || text.includes('download')) {
-        // Generic export button - use the first available format
-        format = Object.keys(availableFormats)[0];
-      }
-      
-      if (!format) {
-        console.log('Could not determine format for button:', button.textContent);
-        return;
-      }
-      
-      console.log(`Setting up ${format} export for button:`, button.textContent);
-      
-      // Check if this format is available
-      if (availableFormats[format]) {
-        // Format is available - enable the button
-        button.disabled = false;
-        button.style.opacity = '1';
-        button.style.cursor = 'pointer';
-        
-        // Update button text if needed
-        if (button.textContent.includes('Coming Soon') || button.textContent.includes('Not Available')) {
-          button.textContent = `Download ${format.toUpperCase()}`;
-        }
-        
-        // Add click handler
-        button.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          
-          const url = availableFormats[format];
-          console.log(`Downloading ${format} from:`, url);
-          
-          downloadFile(url, `model.${format}`, format);
-        };
-      } else {
-        // Format is not available - disable the button
-        button.disabled = true;
-        button.style.opacity = '0.5';
-        button.style.cursor = 'not-allowed';
-        
-        if (!button.textContent.includes('Not Available')) {
-          button.textContent = `${format.toUpperCase()} - Not Available`;
-        }
-        
-        button.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          showToast(`${format.toUpperCase()} format is not available for this model`, 'warning');
-        };
-      }
     });
 
-    // Setup other buttons
-    setupUtilityButtons();
+    // Add some basic styling for the export cards
+    addExportCardStyles();
   }
 
-  function setupUtilityButtons() {
-    // Back to view button
-    const backBtn = document.getElementById('back-to-view-btn');
-    if (backBtn) {
-      backBtn.onclick = () => tabs[2].click();
+  function downloadModel(format) {
+    if (!currentModelData || !currentModelData.exportFormats[format]) {
+      showToast(`${format.toUpperCase()} format is not available`, 'error');
+      return;
     }
 
-    // New project button
-    const newProjectBtn = document.getElementById('new-project-btn');
-    if (newProjectBtn) {
-      newProjectBtn.onclick = () => {
-        if (!confirm('Start new project? This will clear the current model.')) return;
-        
-        // Reset the application state
-        files = [];
-        refreshList();
-        tabs[0].click();
-        
-        // Clear the 3D viewer
-        const modelViewer = document.getElementById('model-viewer');
-        if (modelViewer) {
-          modelViewer.innerHTML = `
-            <div class="viewer-empty-state">
-              <i class="fas fa-cube"></i>
-              <p>3D model will appear here</p>
-            </div>`;
-        }
-        
-        // Reset progress
-        const progressFill = document.querySelector('.progress-fill');
-        const progressPercent = document.querySelector('.progress-percent');
-        const progressText = document.querySelector('.progress-text');
-        
-        if (progressFill) progressFill.style.width = '0%';
-        if (progressPercent) progressPercent.textContent = '0%';
-        if (progressText) progressText.textContent = 'Ready';
-        
-        document.querySelectorAll('.status-badge').forEach(b => b.classList.remove('complete'));
-        
-        showToast('New project started!', 'success');
-      };
-    }
-  }
+    const url = currentModelData.exportFormats[format];
+    const filename = `jewelry_model.${format}`;
 
-  //
-  // 6) UTILITY FUNCTIONS
-  //
-  function downloadFile(url, filename, format) {
     try {
       // Create a temporary anchor element for download
       const a = document.createElement('a');
@@ -443,13 +345,164 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (fallbackError) {
         console.error('Fallback download also failed:', fallbackError);
         showToast(`Failed to download ${format.toUpperCase()} file. Please try again.`, 'error');
-        
-        // Last resort: show the URL
-        const userResponse = confirm(`Download failed. Would you like to open the download URL manually?\n\nURL: ${url}`);
-        if (userResponse) {
-          window.location.href = url;
-        }
       }
+    }
+  }
+
+  //
+  // 7) EXPORT SECTION UTILITY BUTTONS
+  //
+  // Back to view button
+  document.getElementById('back-to-view-btn').onclick = () => {
+    tabs[2].click();
+  };
+
+  // New project button
+  document.getElementById('new-project-btn').onclick = () => {
+    if (!confirm('Start new project? This will clear the current model.')) return;
+    
+    // Reset the application state
+    files = [];
+    currentModelData = null;
+    refreshList();
+    tabs[0].click();
+    
+    // Clear the 3D viewer
+    const modelViewer = document.getElementById('model-viewer');
+    if (modelViewer) {
+      modelViewer.innerHTML = `
+        <div class="viewer-empty-state">
+          <i class="fas fa-cube"></i>
+          <p>3D model will appear here</p>
+        </div>`;
+    }
+    
+    // Clear export section
+    const exportOptionsContainer = document.querySelector('.export-options');
+    if (exportOptionsContainer) {
+      exportOptionsContainer.innerHTML = '';
+    }
+    
+    // Reset progress
+    const progressFill = document.querySelector('.progress-fill');
+    const progressPercent = document.querySelector('.progress-percent');
+    const progressText = document.querySelector('.progress-text');
+    
+    if (progressFill) progressFill.style.width = '0%';
+    if (progressPercent) progressPercent.textContent = '0%';
+    if (progressText) progressText.textContent = 'Ready';
+    
+    document.querySelectorAll('.status-badge').forEach(b => b.classList.remove('complete'));
+    
+    showToast('New project started!', 'success');
+  };
+
+  //
+  // 8) PROGRESS ANIMATION
+  //
+  function startProgress() {
+    const txt = document.querySelector('.progress-text');
+    const pct = document.querySelector('.progress-percent');
+    const bar = document.querySelector('.progress-fill');
+    let p = 0;
+    const iv = setInterval(() => {
+      p = Math.min(95, p + Math.random()*10);
+      bar.style.width = p + '%';
+      pct.textContent = Math.floor(p) + '%';
+      txt.textContent = p < 30 ? 'Analyzing…' : p < 60 ? 'Meshing…' : 'Finalizing…';
+      document.querySelector('.progress-container').dataset.iv = iv;
+    }, 300);
+  }
+
+  function finishProgress() {
+    const iv = +document.querySelector('.progress-container').dataset.iv;
+    if (iv) clearInterval(iv);
+    document.querySelector('.progress-fill').style.width = '100%';
+    document.querySelector('.progress-percent').textContent = '100%';
+    document.querySelector('.progress-text').textContent = 'Done!';
+    document.querySelectorAll('.status-badge').forEach(b => b.classList.add('complete'));
+  }
+
+  //
+  // 9) UTILITY FUNCTIONS
+  //
+  function addExportCardStyles() {
+    // Add styles for export cards if they don't exist
+    if (!document.querySelector('#export-card-styles')) {
+      const style = document.createElement('style');
+      style.id = 'export-card-styles';
+      style.textContent = `
+        .export-options {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          gap: 1.5rem;
+          margin: 2rem 0;
+        }
+        .export-card {
+          background: white;
+          border-radius: 12px;
+          padding: 1.5rem;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          border: 2px solid #e5e7eb;
+          transition: all 0.3s ease;
+        }
+        .export-card.available {
+          border-color: #10b981;
+        }
+        .export-card.unavailable {
+          border-color: #ef4444;
+          opacity: 0.7;
+        }
+        .export-card-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 1rem;
+        }
+        .export-card-header i {
+          font-size: 1.5rem;
+          color: #6b7280;
+        }
+        .export-card-header h3 {
+          margin: 0;
+          font-size: 1.2rem;
+          font-weight: 600;
+          color: #1f2937;
+        }
+        .export-card-body p {
+          color: #6b7280;
+          margin-bottom: 1rem;
+          font-size: 0.9rem;
+        }
+        .status-badge {
+          padding: 0.25rem 0.5rem;
+          border-radius: 6px;
+          font-size: 0.75rem;
+          font-weight: 500;
+          text-transform: uppercase;
+        }
+        .status-badge.available {
+          background-color: #d1fae5;
+          color: #065f46;
+        }
+        .status-badge.unavailable {
+          background-color: #fee2e2;
+          color: #991b1b;
+        }
+        .export-card-actions {
+          display: flex;
+          gap: 0.5rem;
+        }
+        .btn-disabled {
+          background-color: #e5e7eb !important;
+          color: #9ca3af !important;
+          cursor: not-allowed !important;
+        }
+        .btn-disabled:hover {
+          background-color: #e5e7eb !important;
+        }
+      `;
+      document.head.appendChild(style);
     }
   }
 
