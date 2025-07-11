@@ -232,14 +232,39 @@
   <!-- 1. Core Three.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   
-  <!-- 2. OrbitControls -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/controls/OrbitControls.js"></script>
+  <!-- 2. OrbitControls - Using correct CDN path -->
+  <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
   
-  <!-- 3. OBJ Loader -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/loaders/OBJLoader.js"></script>
+  <!-- 3. OBJ Loader - Using correct CDN path -->
+  <script src="https://threejs.org/examples/js/loaders/OBJLoader.js"></script>
   
-  <!-- 4. GLTF Loader (optional, for future use) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/loaders/GLTFLoader.js"></script>
+  <!-- 4. GLTF Loader - Using correct CDN path (optional, for future use) -->
+  <script src="https://threejs.org/examples/js/loaders/GLTFLoader.js"></script>
+  
+  <!-- Alternative: If the above don't work, use these jsdelivr URLs -->
+  <script>
+    // Check if loaders are available, if not load from alternative CDN
+    if (typeof THREE.OrbitControls === 'undefined') {
+      console.log('Loading OrbitControls from alternative CDN...');
+      const script1 = document.createElement('script');
+      script1.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js';
+      document.head.appendChild(script1);
+    }
+    
+    if (typeof THREE.OBJLoader === 'undefined') {
+      console.log('Loading OBJLoader from alternative CDN...');
+      const script2 = document.createElement('script');
+      script2.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js';
+      document.head.appendChild(script2);
+    }
+    
+    if (typeof THREE.GLTFLoader === 'undefined') {
+      console.log('Loading GLTFLoader from alternative CDN...');
+      const script3 = document.createElement('script');
+      script3.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+      document.head.appendChild(script3);
+    }
+  </script>
   
   <!-- 5. Your viewer script -->
   <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
