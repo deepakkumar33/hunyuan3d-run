@@ -249,37 +249,37 @@
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
 
-  <!-- THREE.js scripts - FIXED LOADING ORDER -->
+  <!-- THREE.js scripts - CORRECTED LOADING ORDER -->
   <!-- 1. Core Three.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   
-  <!-- 2. Load OrbitControls -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/controls/OrbitControls.js"></script>
+  <!-- 2. Load additional Three.js components from correct CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   
-  <!-- 3. Load OBJ and GLTF loaders -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/loaders/OBJLoader.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/loaders/GLTFLoader.js"></script>
-  
-  <!-- 4. Initialize Three.js globals -->
+  <!-- 3. Initialize Three.js globals -->
   <script>
-    // Ensure all Three.js components are available globally
-    console.log('Three.js core loaded:', typeof THREE !== 'undefined');
-    console.log('OrbitControls loaded:', typeof THREE.OrbitControls !== 'undefined');
-    console.log('OBJLoader loaded:', typeof THREE.OBJLoader !== 'undefined');
-    console.log('GLTFLoader loaded:', typeof THREE.GLTFLoader !== 'undefined');
-    
-    // Make sure controls and loaders are available
-    if (typeof THREE !== 'undefined') {
-      window.OrbitControls = THREE.OrbitControls;
-      window.OBJLoader = THREE.OBJLoader;
-      window.GLTFLoader = THREE.GLTFLoader;
-    }
+    // Wait for all scripts to load
+    setTimeout(() => {
+      console.log('Three.js core loaded:', typeof THREE !== 'undefined');
+      console.log('OrbitControls loaded:', typeof THREE.OrbitControls !== 'undefined');
+      console.log('OBJLoader loaded:', typeof THREE.OBJLoader !== 'undefined');
+      console.log('GLTFLoader loaded:', typeof THREE.GLTFLoader !== 'undefined');
+      
+      // Make sure controls and loaders are available globally
+      if (typeof THREE !== 'undefined') {
+        window.OrbitControls = THREE.OrbitControls;
+        window.OBJLoader = THREE.OBJLoader;
+        window.GLTFLoader = THREE.GLTFLoader;
+      }
+    }, 100);
   </script>
   
-  <!-- 5. Your viewer script -->
+  <!-- 4. Your viewer script -->
   <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
 
-  <!-- 6. Main app script -->
+  <!-- 5. Main app script -->
   <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
