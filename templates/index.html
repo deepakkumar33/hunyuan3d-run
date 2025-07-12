@@ -178,7 +178,14 @@
             </div>
           </div>
           <div class="viewer-controls">
-            <!-- your controls here… -->
+            <div class="control-group">
+              <label>Wireframe:</label>
+              <input type="checkbox" id="wireframe-toggle" />
+            </div>
+            <div class="control-group">
+              <label>Rotation:</label>
+              <input type="checkbox" id="auto-rotate" />
+            </div>
           </div>
         </div>
         <div class="action-buttons">
@@ -198,10 +205,24 @@
           Export your 3D jewelry model in various formats for 3D printing or further editing.
         </p>
         <div class="export-options">
-          <!-- STL, OBJ, PLY cards… -->
+          <!-- Export cards will be populated by JavaScript -->
         </div>
         <div class="export-settings">
-          <!-- export settings… -->
+          <div class="settings-group">
+            <h4>Export Settings</h4>
+            <div class="setting-item">
+              <label for="scale-factor">Scale Factor:</label>
+              <input type="number" id="scale-factor" min="0.1" max="10" step="0.1" value="1.0" />
+            </div>
+            <div class="setting-item">
+              <label for="unit-system">Units:</label>
+              <select id="unit-system">
+                <option value="mm">Millimeters</option>
+                <option value="cm">Centimeters</option>
+                <option value="in">Inches</option>
+              </select>
+            </div>
+          </div>
         </div>
         <div class="action-buttons">
           <button class="btn btn-secondary" id="back-to-view-btn">
@@ -228,48 +249,79 @@
   <script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"></script>
   <script src="{{ url_for('static', filename='js/particles.js') }}"></script>
 
-  <!-- THREE.js scripts - LOAD IN THIS EXACT ORDER -->
+  <!-- THREE.js scripts - FIXED LOADING ORDER -->
   <!-- 1. Core Three.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   
-  <!-- 2. OrbitControls - Using correct CDN path -->
-  <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
-  
-  <!-- 3. OBJ Loader - Using correct CDN path -->
-  <script src="https://threejs.org/examples/js/loaders/OBJLoader.js"></script>
-  
-  <!-- 4. GLTF Loader - Using correct CDN path (optional, for future use) -->
-  <script src="https://threejs.org/examples/js/loaders/GLTFLoader.js"></script>
-  
-  <!-- Alternative: If the above don't work, use these jsdelivr URLs -->
-  <script>
-    // Check if loaders are available, if not load from alternative CDN
-    if (typeof THREE.OrbitControls === 'undefined') {
-      console.log('Loading OrbitControls from alternative CDN...');
-      const script1 = document.createElement('script');
-      script1.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js';
-      document.head.appendChild(script1);
-    }
+  <!-- 2. Load additional THREE.js modules via ES6 modules (more reliable) -->
+  <script type="module">
+    // Import modules
+    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+    import { OBJLoader } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/loaders/OBJLoader.js';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/loaders/GLTFLoader.js';
+    import { STLLoader } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/loaders/STLLoader.js';
     
-    if (typeof THREE.OBJLoader === 'undefined') {
-      console.log('Loading OBJLoader from alternative CDN...');
-      const script2 = document.createElement('script');
-      script2.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js';
-      document.head.appendChild(script2);
-    }
+    // Make available globally
+    window.OrbitControls = OrbitControls;
+    window.OBJLoader = OBJLoader;
+    window.GLTFLoader = GLTFLoader;
+    window.STLLoader = STLLoader;
     
-    if (typeof THREE.GLTFLoader === 'undefined') {
-      console.log('Loading GLTFLoader from alternative CDN...');
-      const script3 = document.createElement('script');
-      script3.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
-      document.head.appendChild(script3);
+    console.log('Three.js modules loaded successfully');
+    
+    // Initialize the viewer after modules are loaded
+    if (window.ThreeJSViewer) {
+      window.ThreeJSViewer.modulesLoaded = true;
     }
   </script>
   
-  <!-- 5. Your viewer script -->
+  <!-- Fallback for browsers that don't support ES6 modules -->
+  <script>
+    // Check if modules loaded, if not use alternative loading
+    setTimeout(() => {
+      if (!window.OrbitControls) {
+        console.log('Loading Three.js modules via legacy method...');
+        
+        // Load scripts sequentially
+        const scripts = [
+          'https://threejs.org/examples/js/controls/OrbitControls.js',
+          'https://threejs.org/examples/js/loaders/OBJLoader.js',
+          'https://threejs.org/examples/js/loaders/GLTFLoader.js'
+        ];
+        
+        function loadScript(src) {
+          return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+          });
+        }
+        
+        Promise.all(scripts.map(loadScript))
+          .then(() => {
+            console.log('Legacy Three.js modules loaded');
+            // Make OrbitControls available globally if loaded via THREE namespace
+            if (THREE.OrbitControls) {
+              window.OrbitControls = THREE.OrbitControls;
+            }
+            if (THREE.OBJLoader) {
+              window.OBJLoader = THREE.OBJLoader;
+            }
+            if (THREE.GLTFLoader) {
+              window.GLTFLoader = THREE.GLTFLoader;
+            }
+          })
+          .catch(console.error);
+      }
+    }, 1000);
+  </script>
+  
+  <!-- 3. Your viewer script -->
   <script src="{{ url_for('static', filename='js/threejs-viewer.js') }}"></script>
 
-  <!-- 6. Main app script -->
+  <!-- 4. Main app script -->
   <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
