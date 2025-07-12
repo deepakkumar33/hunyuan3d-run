@@ -9,53 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global variables for model data
   let currentModelData = null;
 
-  // Check if Three.js and required components are loaded
-  function checkThreeJSStatus() {
-    const status = {
-      core: typeof THREE !== 'undefined',
-      orbitControls: typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined',
-      objLoader: typeof THREE !== 'undefined' && typeof THREE.OBJLoader !== 'undefined',
-      gltfLoader: typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined'
-    };
-    
-    console.log('Three.js Status:', status);
-    
-    if (!status.core) {
-      showToast('Three.js core library failed to load', 'error');
-      return false;
-    }
-    
-    if (!status.orbitControls) {
-      console.warn('OrbitControls not available - camera controls will be limited');
-    }
-    
-    if (!status.objLoader) {
-      console.warn('OBJLoader not available - OBJ files cannot be loaded');
-    }
-    
-    if (!status.gltfLoader) {
-      console.warn('GLTFLoader not available - GLTF/GLB files cannot be loaded');
-    }
-    
-    return true;
-  }
-
-  // Wait for Three.js to be ready
-  function waitForThreeJS() {
-    return new Promise((resolve) => {
-      const maxAttempts = 50;
-      let attempts = 0;
-      
-      const checkInterval = setInterval(() => {
-        attempts++;
-        if (typeof THREE !== 'undefined' || attempts >= maxAttempts) {
-          clearInterval(checkInterval);
-          resolve(checkThreeJSStatus());
-        }
-      }, 100);
-    });
-  }
-
   //
   // 1) NAVIGATION
   //
@@ -102,7 +55,6 @@ document.addEventListener('DOMContentLoaded', () => {
     files = [...files, ...list];
     refreshList();
   }
-  
   function refreshList() {
     if (!files.length) {
       fileList.innerHTML = `
@@ -141,12 +93,6 @@ document.addEventListener('DOMContentLoaded', () => {
   uploadBtn.addEventListener('click', async () => {
     if (!files.length) return;
 
-    // Check if backend is available
-    if (!await checkBackendConnection()) {
-      showToast('Backend server is not available. Please check if your server is running.', 'error');
-      return;
-    }
-
     // switch to "Process" tab
     tabs[1].click();
 
@@ -159,17 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let exportFormats = {};
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes timeout
-
-      const res = await fetch(CONVERT_API, { 
-        method: 'POST', 
-        body: form,
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-
+      const res = await fetch(CONVERT_API, { method:'POST', body: form });
       if (!res.ok) {
         const ct = res.headers.get('Content-Type')||'';
         let msg;
@@ -181,7 +117,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         throw new Error(msg);
       }
-      
       const json = await res.json();
       console.log('API Response:', json);
 
@@ -220,15 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     } catch(err) {
       console.error('Conversion failed:', err);
-      
-      if (err.name === 'AbortError') {
-        showToast('Request timed out. Please try again.', 'error');
-      } else if (err.message.includes('Failed to fetch')) {
-        showToast('Cannot connect to server. Please check if your backend is running.', 'error');
-      } else {
-        showToast(`Error: ${err.message}`, 'error');
-      }
-      
+      showToast(`Error: ${err.message}`, 'error');
       tabs[0].click();
       finishProgress();
       return;
@@ -244,40 +171,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   //
-  // 4) BACKEND CONNECTION CHECK
-  //
-  async function checkBackendConnection() {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 seconds timeout
-      
-      const response = await fetch(`${ORIGIN}/api/health`, {
-        method: 'GET',
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      return response.ok;
-    } catch (error) {
-      console.error('Backend connection check failed:', error);
-      return false;
-    }
-  }
-
-  //
-  // 5) INITIALIZE 3D VIEWER
+  // 4) INITIALIZE 3D VIEWER
   //
   async function initializeViewer() {
     if (!currentModelData) {
       console.error('No model data available');
-      return;
-    }
-
-    // Wait for Three.js to be ready
-    const threeJSReady = await waitForThreeJS();
-    if (!threeJSReady) {
-      console.error('Three.js is not available');
-      showFallbackViewer();
       return;
     }
 
@@ -317,33 +215,27 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   //
-  // 6) VIEW SECTION BUTTONS
+  // 5) VIEW SECTION BUTTONS
   //
   // Refine button (placeholder functionality)
-  const refineBtn = document.getElementById('refine-btn');
-  if (refineBtn) {
-    refineBtn.onclick = () => {
-      showToast('Mesh refinement is coming soon! 🔧', 'info');
-    };
-  }
+  document.getElementById('refine-btn').onclick = () => {
+    showToast('Mesh refinement is coming soon! 🔧', 'info');
+  };
 
   // Export button in view section - should navigate to export section
-  const exportBtn = document.getElementById('export-btn');
-  if (exportBtn) {
-    exportBtn.onclick = () => {
-      if (!currentModelData) {
-        showToast('No model available for export', 'error');
-        return;
-      }
-      
-      // Switch to export section
-      tabs[3].click();
-      setupExportSection();
-    };
-  }
+  document.getElementById('export-btn').onclick = () => {
+    if (!currentModelData) {
+      showToast('No model available for export', 'error');
+      return;
+    }
+    
+    // Switch to export section
+    tabs[3].click();
+    setupExportSection();
+  };
 
   //
-  // 7) EXPORT SECTION SETUP
+  // 6) EXPORT SECTION SETUP
   //
   function setupExportSection() {
     if (!currentModelData) {
@@ -417,117 +309,111 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Replace the downloadModel function in main.js with this improved version
-  async function downloadModel(format) {
-    if (!currentModelData || !currentModelData.exportFormats[format]) {
-      showToast(`${format.toUpperCase()} format is not available`, 'error');
-      return;
-    }
-
-    const url = currentModelData.exportFormats[format];
-    const filename = `jewelry_model.${format}`;
-
-    try {
-      showToast(`Downloading ${format.toUpperCase()}...`, 'info');
-      
-      // Use fetch to download the file
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      // Get the blob data
-      const blob = await response.blob();
-      
-      // Create blob URL
-      const blobUrl = window.URL.createObjectURL(blob);
-      
-      // Create download link
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = filename;
-      a.style.display = 'none';
-      
-      // Trigger download
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      // Clean up blob URL
-      window.URL.revokeObjectURL(blobUrl);
-      
-      showToast(`${format.toUpperCase()} downloaded successfully!`, 'success');
-      
-    } catch (error) {
-      console.error(`Download failed for ${format}:`, error);
-      showToast(`Download failed: ${error.message}`, 'error');
-      
-      // Fallback: try direct link
-      try {
-        window.open(url, '_blank');
-        showToast(`${format.toUpperCase()} opened in new tab`, 'info');
-      } catch (fallbackError) {
-        console.error('Fallback also failed:', fallbackError);
-      }
-    }
+async function downloadModel(format) {
+  if (!currentModelData || !currentModelData.exportFormats[format]) {
+    showToast(`${format.toUpperCase()} format is not available`, 'error');
+    return;
   }
 
+  const url = currentModelData.exportFormats[format];
+  const filename = `jewelry_model.${format}`;
+
+  try {
+    showToast(`Downloading ${format.toUpperCase()}...`, 'info');
+    
+    // Use fetch to download the file
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    // Get the blob data
+    const blob = await response.blob();
+    
+    // Create blob URL
+    const blobUrl = window.URL.createObjectURL(blob);
+    
+    // Create download link
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    
+    // Trigger download
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // Clean up blob URL
+    window.URL.revokeObjectURL(blobUrl);
+    
+    showToast(`${format.toUpperCase()} downloaded successfully!`, 'success');
+    
+  } catch (error) {
+    console.error(`Download failed for ${format}:`, error);
+    showToast(`Download failed: ${error.message}`, 'error');
+    
+    // Fallback: try direct link
+    try {
+      window.open(url, '_blank');
+      showToast(`${format.toUpperCase()} opened in new tab`, 'info');
+    } catch (fallbackError) {
+      console.error('Fallback also failed:', fallbackError);
+    }
+  }
+}
+
   //
-  // 8) EXPORT SECTION UTILITY BUTTONS
+  // 7) EXPORT SECTION UTILITY BUTTONS
   //
   // Back to view button
-  const backToViewBtn = document.getElementById('back-to-view-btn');
-  if (backToViewBtn) {
-    backToViewBtn.onclick = () => {
-      tabs[2].click();
-    };
-  }
+  document.getElementById('back-to-view-btn').onclick = () => {
+    tabs[2].click();
+  };
 
   // New project button
-  const newProjectBtn = document.getElementById('new-project-btn');
-  if (newProjectBtn) {
-    newProjectBtn.onclick = () => {
-      if (!confirm('Start new project? This will clear the current model.')) return;
-      
-      // Reset the application state
-      files = [];
-      currentModelData = null;
-      refreshList();
-      tabs[0].click();
-      
-      // Clear the 3D viewer
-      const modelViewer = document.getElementById('model-viewer');
-      if (modelViewer) {
-        modelViewer.innerHTML = `
-          <div class="viewer-empty-state">
-            <i class="fas fa-cube"></i>
-            <p>3D model will appear here</p>
-          </div>`;
-      }
-      
-      // Clear export section
-      const exportOptionsContainer = document.querySelector('.export-options');
-      if (exportOptionsContainer) {
-        exportOptionsContainer.innerHTML = '';
-      }
-      
-      // Reset progress
-      const progressFill = document.querySelector('.progress-fill');
-      const progressPercent = document.querySelector('.progress-percent');
-      const progressText = document.querySelector('.progress-text');
-      
-      if (progressFill) progressFill.style.width = '0%';
-      if (progressPercent) progressPercent.textContent = '0%';
-      if (progressText) progressText.textContent = 'Ready';
-      
-      document.querySelectorAll('.status-badge').forEach(b => b.classList.remove('complete'));
-      
-      showToast('New project started!', 'success');
-    };
-  }
+  document.getElementById('new-project-btn').onclick = () => {
+    if (!confirm('Start new project? This will clear the current model.')) return;
+    
+    // Reset the application state
+    files = [];
+    currentModelData = null;
+    refreshList();
+    tabs[0].click();
+    
+    // Clear the 3D viewer
+    const modelViewer = document.getElementById('model-viewer');
+    if (modelViewer) {
+      modelViewer.innerHTML = `
+        <div class="viewer-empty-state">
+          <i class="fas fa-cube"></i>
+          <p>3D model will appear here</p>
+        </div>`;
+    }
+    
+    // Clear export section
+    const exportOptionsContainer = document.querySelector('.export-options');
+    if (exportOptionsContainer) {
+      exportOptionsContainer.innerHTML = '';
+    }
+    
+    // Reset progress
+    const progressFill = document.querySelector('.progress-fill');
+    const progressPercent = document.querySelector('.progress-percent');
+    const progressText = document.querySelector('.progress-text');
+    
+    if (progressFill) progressFill.style.width = '0%';
+    if (progressPercent) progressPercent.textContent = '0%';
+    if (progressText) progressText.textContent = 'Ready';
+    
+    document.querySelectorAll('.status-badge').forEach(b => b.classList.remove('complete'));
+    
+    showToast('New project started!', 'success');
+  };
 
   //
-  // 9) PROGRESS ANIMATION
+  // 8) PROGRESS ANIMATION
   //
   function startProgress() {
     const txt = document.querySelector('.progress-text');
@@ -553,7 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   //
-  // 10) UTILITY FUNCTIONS
+  // 9) UTILITY FUNCTIONS
   //
   function addExportCardStyles() {
     // Add styles for export cards if they don't exist
@@ -725,11 +611,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 300);
     }, 4000);
   }
-
-  // Initialize Three.js status check
-  waitForThreeJS().then(() => {
-    console.log('Three.js initialization check completed');
-  });
 
   console.log('main.js initialization complete');
 });
