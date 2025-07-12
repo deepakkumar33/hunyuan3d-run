@@ -43,17 +43,22 @@ async function initThreeJSViewer() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
 
-  // Initialize controls
-  if (typeof THREE.OrbitControls !== 'undefined') {
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.enableZoom = true;
-    controls.enableRotate = true;
-    controls.enablePan = true;
-    controls.autoRotate = false;
-    controls.autoRotateSpeed = 2.0;
-    console.log('OrbitControls initialized successfully');
+  // Initialize controls with better error handling
+  if (typeof THREE !== 'undefined' && THREE.OrbitControls) {
+    try {
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.enableZoom = true;
+      controls.enableRotate = true;
+      controls.enablePan = true;
+      controls.autoRotate = false;
+      controls.autoRotateSpeed = 2.0;
+      console.log('OrbitControls initialized successfully');
+    } catch (error) {
+      console.warn('Failed to initialize OrbitControls:', error);
+      controls = null;
+    }
   } else {
     console.warn('OrbitControls not available - camera controls disabled');
     controls = null;
@@ -135,34 +140,41 @@ async function loadModel(modelUrl) {
     wireframeMesh = null;
   }
 
-  // Determine file type and loader
+  // Determine file type and create loader
   const extension = modelUrl.split('.').pop().toLowerCase();
   let loader = null;
   
   try {
     if (extension === 'obj') {
-      if (typeof THREE.OBJLoader !== 'undefined') {
+      // Check if OBJLoader is available
+      if (typeof THREE !== 'undefined' && THREE.OBJLoader) {
         loader = new THREE.OBJLoader();
         console.log('Using OBJLoader');
       } else {
-        throw new Error('OBJLoader not available');
+        throw new Error('OBJLoader not available - please check CDN loading');
       }
     } else if (extension === 'gltf' || extension === 'glb') {
-      if (typeof THREE.GLTFLoader !== 'undefined') {
+      // Check if GLTFLoader is available
+      if (typeof THREE !== 'undefined' && THREE.GLTFLoader) {
         loader = new THREE.GLTFLoader();
         console.log('Using GLTFLoader');
       } else {
-        throw new Error('GLTFLoader not available');
+        throw new Error('GLTFLoader not available - please check CDN loading');
       }
     } else {
       throw new Error(`Unsupported file format: ${extension}`);
     }
 
-    // Load the model
+    // Load the model with better error handling
     const asset = await new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error('Model loading timed out'));
+      }, 30000); // 30 second timeout
+
       loader.load(
         modelUrl,
         (result) => {
+          clearTimeout(timeoutId);
           console.log('Model loaded successfully');
           resolve(result);
         },
@@ -173,6 +185,7 @@ async function loadModel(modelUrl) {
           }
         },
         (error) => {
+          clearTimeout(timeoutId);
           console.error('Model loading error:', error);
           reject(error);
         }
@@ -284,6 +297,9 @@ function showErrorState(container, message) {
     <i class="fas fa-exclamation-triangle"></i>
     <p>Failed to load 3D model</p>
     <p class="viewer-info">${message}</p>
+    <button class="btn btn-primary" onclick="window.location.reload()">
+      <i class="fas fa-refresh"></i> Reload Page
+    </button>
   `;
   container.appendChild(errorDiv);
 }
@@ -313,10 +329,19 @@ function toggleWireframe(enabled) {
   
   if (enabled) {
     // Create wireframe
-    const wireframeGeometry = new THREE.WireframeGeometry(currentMesh.children[0]?.geometry || currentMesh.geometry);
-    const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 });
-    wireframeMesh = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
-    scene.add(wireframeMesh);
+    let geometry = null;
+    currentMesh.traverse((child) => {
+      if (child.isMesh && child.geometry) {
+        geometry = child.geometry;
+      }
+    });
+    
+    if (geometry) {
+      const wireframeGeometry = new THREE.WireframeGeometry(geometry);
+      const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 });
+      wireframeMesh = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
+      scene.add(wireframeMesh);
+    }
   } else {
     // Remove wireframe
     if (wireframeMesh) {
@@ -334,7 +359,31 @@ function toggleAutoRotate(enabled) {
   }
 }
 
-// Initialize on page load
+// Wait for DOM and Three.js to be ready
 document.addEventListener('DOMContentLoaded', () => {
   console.log('Three.js viewer script loaded');
+  
+  // Check if Three.js is available
+  const checkThreeJS = () => {
+    if (typeof THREE !== 'undefined') {
+      console.log('Three.js is available');
+      return true;
+    } else {
+      console.warn('Three.js is not available yet');
+      return false;
+    }
+  };
+  
+  // Wait for Three.js to be ready
+  let attempts = 0;
+  const maxAttempts = 50;
+  const checkInterval = setInterval(() => {
+    attempts++;
+    if (checkThreeJS() || attempts >= maxAttempts) {
+      clearInterval(checkInterval);
+      if (attempts >= maxAttempts) {
+        console.error('Three.js failed to load after maximum attempts');
+      }
+    }
+  }, 100);
 });
