@@ -3,73 +3,112 @@
 // No exports - this is a regular script, not a module
 
 let scene, camera, renderer, controls, currentMesh;
+let autoRotate = false;
+let wireframeEnabled = false;
+let wireframeMesh = null;
 
 // Make functions available globally so main.js can access them
 window.ThreeJSViewer = {
   initThreeJSViewer: initThreeJSViewer,
-  loadModel: loadModel
+  loadModel: loadModel,
+  toggleWireframe: toggleWireframe,
+  toggleAutoRotate: toggleAutoRotate
 };
 
 async function initThreeJSViewer() {
   const container = document.getElementById('model-viewer');
   if (!container) throw new Error('No #model-viewer element');
+  
+  // Clear any existing content
   container.innerHTML = '';
 
+  // Create scene
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf8f9fa);
 
+  // Create camera
   camera = new THREE.PerspectiveCamera(
     75,
     container.clientWidth / container.clientHeight,
     0.1,
     1000
   );
-  camera.position.set(0, 0, 2);
+  camera.position.set(2, 2, 2);
 
+  // Create renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
 
-  // Check if OrbitControls is available with multiple possible locations
+  // Initialize controls
   if (typeof THREE.OrbitControls !== 'undefined') {
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    console.log('OrbitControls initialized via THREE.OrbitControls');
-  } else if (typeof OrbitControls !== 'undefined') {
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    console.log('OrbitControls initialized via global OrbitControls');
+    controls.dampingFactor = 0.05;
+    controls.enableZoom = true;
+    controls.enableRotate = true;
+    controls.enablePan = true;
+    controls.autoRotate = false;
+    controls.autoRotateSpeed = 2.0;
+    console.log('OrbitControls initialized successfully');
   } else {
     console.warn('OrbitControls not available - camera controls disabled');
-    // Basic fallback - allow manual camera positioning
     controls = null;
   }
 
-  // Lighting setup
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const d1 = new THREE.DirectionalLight(0xffffff, 0.8);
-  d1.position.set(1, 1, 1).normalize();
-  scene.add(d1);
-  const d2 = new THREE.DirectionalLight(0xffffff, 0.4);
-  d2.position.set(-1, -1, -1).normalize();
-  scene.add(d2);
+  // Enhanced lighting setup
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+  scene.add(ambientLight);
 
-  window.addEventListener('resize', _onWindowResize);
-  _animate();
+  const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight1.position.set(5, 5, 5);
+  directionalLight1.castShadow = true;
+  directionalLight1.shadow.mapSize.width = 2048;
+  directionalLight1.shadow.mapSize.height = 2048;
+  scene.add(directionalLight1);
+
+  const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+  directionalLight2.position.set(-5, -5, -5);
+  scene.add(directionalLight2);
+
+  // Add grid helper
+  const gridHelper = new THREE.GridHelper(10, 10, 0xcccccc, 0xcccccc);
+  gridHelper.material.opacity = 0.2;
+  gridHelper.material.transparent = true;
+  scene.add(gridHelper);
+
+  // Set up window resize handler
+  window.addEventListener('resize', onWindowResize);
+  
+  // Start animation loop
+  animate();
+
+  console.log('Three.js viewer initialized successfully');
 }
 
-function _onWindowResize() {
-  const c = document.getElementById('model-viewer');
-  if (!c) return;
-  camera.aspect = c.clientWidth / c.clientHeight;
+function onWindowResize() {
+  const container = document.getElementById('model-viewer');
+  if (!container) return;
+  
+  camera.aspect = container.clientWidth / container.clientHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(c.clientWidth, c.clientHeight);
+  renderer.setSize(container.clientWidth, container.clientHeight);
 }
 
-function _animate() {
-  requestAnimationFrame(_animate);
-  if (controls) controls.update();
+function animate() {
+  requestAnimationFrame(animate);
+  
+  if (controls) {
+    controls.update();
+  }
+  
+  if (currentMesh && autoRotate && !controls?.autoRotate) {
+    currentMesh.rotation.y += 0.01;
+  }
+  
   renderer.render(scene, camera);
 }
 
@@ -77,149 +116,225 @@ async function loadModel(modelUrl) {
   console.log('Loading model from:', modelUrl);
 
   if (!scene) {
+    console.log('Scene not initialized, initializing now...');
     await initThreeJSViewer();
   }
 
+  // Show loading state
   const container = document.getElementById('model-viewer');
-  const loaderDiv = document.createElement('div');
-  loaderDiv.className = 'viewer-loading';
-  loaderDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i><p>Loading 3D model…</p>`;
-  container.appendChild(loaderDiv);
+  showLoadingState(container);
 
+  // Remove existing model
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
   }
+  
+  if (wireframeMesh) {
+    scene.remove(wireframeMesh);
+    wireframeMesh = null;
+  }
 
-  const ext = modelUrl.split('.').pop().toLowerCase();
+  // Determine file type and loader
+  const extension = modelUrl.split('.').pop().toLowerCase();
   let loader = null;
   
   try {
-    if (ext === 'obj') {
-      // Check if OBJLoader is available with multiple possible locations
+    if (extension === 'obj') {
       if (typeof THREE.OBJLoader !== 'undefined') {
         loader = new THREE.OBJLoader();
-        console.log('Using THREE.OBJLoader');
-      } else if (typeof OBJLoader !== 'undefined') {
-        loader = new OBJLoader();
-        console.log('Using global OBJLoader');
+        console.log('Using OBJLoader');
       } else {
-        throw new Error('OBJLoader not available. Please check if the OBJLoader script is loaded correctly.');
+        throw new Error('OBJLoader not available');
       }
-    } else if (ext === 'gltf' || ext === 'glb') {
-      // Check if GLTFLoader is available with multiple possible locations
+    } else if (extension === 'gltf' || extension === 'glb') {
       if (typeof THREE.GLTFLoader !== 'undefined') {
         loader = new THREE.GLTFLoader();
-        console.log('Using THREE.GLTFLoader');
-      } else if (typeof GLTFLoader !== 'undefined') {
-        loader = new GLTFLoader();
-        console.log('Using global GLTFLoader');
+        console.log('Using GLTFLoader');
       } else {
-        throw new Error('GLTFLoader not available. Please check if the GLTFLoader script is loaded correctly.');
+        throw new Error('GLTFLoader not available');
       }
     } else {
-      throw new Error(`Unsupported file format: ${ext}`);
+      throw new Error(`Unsupported file format: ${extension}`);
     }
 
     // Load the model
-    await new Promise((resolve, reject) => {
+    const asset = await new Promise((resolve, reject) => {
       loader.load(
         modelUrl,
-        (asset) => {
-          try {
-            container.removeChild(loaderDiv);
-            
-            // Handle different loader return types
-            if (ext === 'gltf' || ext === 'glb') {
-              currentMesh = asset.scene;
-            } else {
-              currentMesh = asset;
-            }
-
-            let hasValidGeometry = false;
-            
-            currentMesh.traverse(child => {
-              if (child.isMesh && child.geometry && child.geometry.attributes.position) {
-                const pos = child.geometry.attributes.position.array;
-                if (!pos || pos.length === 0 || pos.some(val => isNaN(val))) {
-                  console.warn('Invalid geometry data found');
-                  return;
-                }
-                hasValidGeometry = true;
-
-                // Apply material
-                child.material = new THREE.MeshPhongMaterial({
-                  color: 0xc0c0c0,
-                  specular: 0x555555,
-                  shininess: 50,
-                  side: THREE.DoubleSide
-                });
-
-                // Add wireframe
-                const wireframe = new THREE.LineSegments(
-                  new THREE.WireframeGeometry(child.geometry),
-                  new THREE.LineBasicMaterial({ 
-                    color: 0x000000, 
-                    transparent: true, 
-                    opacity: 0.25 
-                  })
-                );
-                child.add(wireframe);
-              }
-            });
-
-            if (!hasValidGeometry) {
-              throw new Error('Model contains no valid geometry');
-            }
-
-            scene.add(currentMesh);
-            
-            // Center and scale the model
-            const box = new THREE.Box3().setFromObject(currentMesh);
-            const center = box.getCenter(new THREE.Vector3());
-            const size = box.getSize(new THREE.Vector3());
-            
-            currentMesh.position.sub(center);
-            
-            const maxDim = Math.max(size.x, size.y, size.z);
-            if (maxDim === 0 || isNaN(maxDim)) {
-              throw new Error('Invalid model dimensions');
-            }
-            
-            currentMesh.scale.setScalar(1.5 / maxDim);
-            
-            if (controls) controls.update();
-            
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
+        (result) => {
+          console.log('Model loaded successfully');
+          resolve(result);
         },
-        (xhr) => {
-          if (xhr.total) {
-            const progress = (xhr.loaded / xhr.total * 100).toFixed(2);
-            console.log(`Model loading progress: ${progress}%`);
+        (progress) => {
+          if (progress.total) {
+            const percent = (progress.loaded / progress.total * 100).toFixed(1);
+            console.log(`Loading progress: ${percent}%`);
           }
         },
         (error) => {
+          console.error('Model loading error:', error);
           reject(error);
         }
       );
     });
 
-  } catch (error) {
-    console.error('Model load error:', error);
-    
-    if (loaderDiv.parentNode) {
-      container.removeChild(loaderDiv);
+    // Process the loaded model
+    let modelObject;
+    if (extension === 'gltf' || extension === 'glb') {
+      modelObject = asset.scene;
+    } else {
+      modelObject = asset;
     }
+
+    // Validate and process geometry
+    let hasValidGeometry = false;
+    modelObject.traverse((child) => {
+      if (child.isMesh && child.geometry) {
+        hasValidGeometry = true;
+        
+        // Apply enhanced material
+        child.material = new THREE.MeshPhongMaterial({
+          color: 0xd4af37, // Gold color for jewelry
+          specular: 0x111111,
+          shininess: 100,
+          side: THREE.DoubleSide
+        });
+        
+        // Enable shadow casting and receiving
+        child.castShadow = true;
+        child.receiveShadow = true;
+        
+        // Ensure geometry has proper attributes
+        if (!child.geometry.attributes.normal) {
+          child.geometry.computeVertexNormals();
+        }
+      }
+    });
+
+    if (!hasValidGeometry) {
+      throw new Error('No valid geometry found in model');
+    }
+
+    // Add model to scene
+    scene.add(modelObject);
+    currentMesh = modelObject;
+
+    // Center and scale the model
+    const box = new THREE.Box3().setFromObject(currentMesh);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
     
-    container.innerHTML = `
-      <div class="viewer-error">
-        <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load 3D model</p>
-        <p class="viewer-info">${error.message}</p>
-      </div>
-    `;
+    // Move model to center
+    currentMesh.position.sub(center);
+    
+    // Scale to fit in view
+    const maxDimension = Math.max(size.x, size.y, size.z);
+    if (maxDimension > 0) {
+      const scale = 2 / maxDimension;
+      currentMesh.scale.setScalar(scale);
+    }
+
+    // Update camera position to view the model
+    const distance = Math.max(size.x, size.y, size.z) * 1.5;
+    camera.position.set(distance, distance, distance);
+    camera.lookAt(0, 0, 0);
+    
+    if (controls) {
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+
+    // Remove loading state
+    hideLoadingState(container);
+    
+    // Set up viewer controls
+    setupViewerControls();
+
+    console.log('Model loaded and positioned successfully');
+
+  } catch (error) {
+    console.error('Failed to load model:', error);
+    showErrorState(container, error.message);
   }
 }
+
+function showLoadingState(container) {
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'viewer-loading';
+  loadingDiv.innerHTML = `
+    <i class="fas fa-spinner fa-spin"></i>
+    <p>Loading 3D model...</p>
+  `;
+  container.appendChild(loadingDiv);
+}
+
+function hideLoadingState(container) {
+  const loadingDiv = container.querySelector('.viewer-loading');
+  if (loadingDiv) {
+    container.removeChild(loadingDiv);
+  }
+}
+
+function showErrorState(container, message) {
+  hideLoadingState(container);
+  const errorDiv = document.createElement('div');
+  errorDiv.className = 'viewer-error';
+  errorDiv.innerHTML = `
+    <i class="fas fa-exclamation-triangle"></i>
+    <p>Failed to load 3D model</p>
+    <p class="viewer-info">${message}</p>
+  `;
+  container.appendChild(errorDiv);
+}
+
+function setupViewerControls() {
+  // Wireframe toggle
+  const wireframeToggle = document.getElementById('wireframe-toggle');
+  if (wireframeToggle) {
+    wireframeToggle.addEventListener('change', (e) => {
+      toggleWireframe(e.target.checked);
+    });
+  }
+
+  // Auto-rotate toggle
+  const autoRotateToggle = document.getElementById('auto-rotate');
+  if (autoRotateToggle) {
+    autoRotateToggle.addEventListener('change', (e) => {
+      toggleAutoRotate(e.target.checked);
+    });
+  }
+}
+
+function toggleWireframe(enabled) {
+  wireframeEnabled = enabled;
+  
+  if (!currentMesh) return;
+  
+  if (enabled) {
+    // Create wireframe
+    const wireframeGeometry = new THREE.WireframeGeometry(currentMesh.children[0]?.geometry || currentMesh.geometry);
+    const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 });
+    wireframeMesh = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
+    scene.add(wireframeMesh);
+  } else {
+    // Remove wireframe
+    if (wireframeMesh) {
+      scene.remove(wireframeMesh);
+      wireframeMesh = null;
+    }
+  }
+}
+
+function toggleAutoRotate(enabled) {
+  autoRotate = enabled;
+  
+  if (controls) {
+    controls.autoRotate = enabled;
+  }
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('Three.js viewer script loaded');
+});
