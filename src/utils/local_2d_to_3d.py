@@ -1,7 +1,7 @@
 import os
 import torch
 import logging
-from hunyuan3d.pipeline import Hunyuan3DDiTFlowMatchingPipeline
+from hy3dgen.shapegen.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 
 
 class Local2DTo3DConverter:
