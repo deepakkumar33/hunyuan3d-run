@@ -1,78 +1,92 @@
-"""
-Handles loading and inference for a local Hunyuan3D model.
-"""
-__all__ = ["Local2DTo3DConverter"]
-
 import os
 import torch
-import trimesh
 import logging
+from hunyuan3d.pipeline import Hunyuan3DDiTFlowMatchingPipeline
 
-from hy3dgen.shapegen.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 
 class Local2DTo3DConverter:
-    """
-    Handles loading and inference for a local Hunyuan3D model.
-    """
-    def __init__(self, model_dir, logger=None):
-        self.logger = logger or logging.getLogger(__name__)
-        self.pipeline = None
+    def __init__(self, model_dir, model_name="hunyuan3d", use_fp16=True):
         self.model_dir = model_dir
+        self.model_name = model_name
+        self.use_fp16 = use_fp16
+        self.pipeline = None
         self.dummy_mode = False
+
+        # Logger setup
+        self.logger = logging.getLogger(self.__class__.__name__)
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "[%(asctime)s] %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
+
+        # Load the pipeline when the class is created
         self._load_pipeline()
 
     def _load_pipeline(self):
+        """
+        Loads the Hunyuan3D pipeline from the given model directory.
+        Supports both .safetensors and .ckpt model formats.
+        """
+        model_path = os.path.join(self.model_dir, self.model_name)
+        config_path = os.path.join(model_path, 'config.yaml')
+        safetensors_path = os.path.join(model_path, 'model.fp16.safetensors')
+        ckpt_path = os.path.join(model_path, 'model.fp16.ckpt')
+
+        if not os.path.exists(config_path):
+            self.logger.error(f"Config file not found: {config_path}")
+            self.dummy_mode = True
+            return
+
+        # Check which model file is available
+        if os.path.exists(safetensors_path):
+            self.logger.info("Found .safetensors model file.")
+            model_file = 'model.fp16.safetensors'
+        elif os.path.exists(ckpt_path):
+            self.logger.info("Found .ckpt model file.")
+            model_file = 'model.fp16.ckpt'
+        else:
+            self.logger.error(f"No model file found in {model_path} "
+                              f"(neither .safetensors nor .ckpt)")
+            self.dummy_mode = True
+            return
+
+        # Load the pipeline
         try:
-            abs_model_dir = os.path.abspath(self.model_dir)
-            subfolder = "hunyuan3d-dit-v2-0"
-            model_path = os.path.join(abs_model_dir, subfolder)
-            config_path = os.path.join(model_path, 'config.yaml')
-            safetensors_path = os.path.join(model_path, 'model.fp16.safetensors')
-
-            if not os.path.exists(config_path):
-                self.logger.error(f"Config file not found: {config_path}")
-                self.dummy_mode = True
-                return
-            if not os.path.exists(safetensors_path):
-                self.logger.error(f"Safetensors file not found: {safetensors_path}")
-                self.dummy_mode = True
-                return
-
-            self.logger.info(f"Loading Hunyuan3D model from {model_path}")
-
-            use_gpu = torch.cuda.is_available()
-            device_map = "auto" if use_gpu else "cpu"
-            dtype = torch.float16 if use_gpu else torch.float32
-
-            self.logger.info(f"🔧 Using device: {'GPU' if use_gpu else 'CPU'}")
+            self.logger.info(f"Loading model from {model_path} (using {model_file})...")
+            dtype = torch.float16 if self.use_fp16 else torch.float32
+            device_map = "cuda" if torch.cuda.is_available() else "cpu"
 
             self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-                abs_model_dir,
+                model_path,
                 local_files_only=True,
                 torch_dtype=dtype,
-                subfolder=subfolder,
                 device_map=device_map
             )
-            self.logger.info(f"Hunyuan3D model loaded successfully on {'GPU' if use_gpu else 'CPU'}")
-
+            self.logger.info("Pipeline loaded successfully.")
         except Exception as e:
-            self.logger.error(f"Unexpected error loading model: {e}")
+            self.logger.error(f"Failed to load pipeline: {e}")
             self.dummy_mode = True
 
-    def convert(self, image_path):
+    def convert(self, input_image, output_path):
+        """
+        Converts a 2D image to a 3D model using the loaded pipeline.
+        """
         if self.dummy_mode or self.pipeline is None:
-            self.logger.warning("Using dummy mesh due to model loading failure or dummy mode.")
-            vertices = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
-            faces = [[0, 1, 2]]
-            return trimesh.Trimesh(vertices=vertices, faces=faces)
+            self.logger.warning("Pipeline not available. Running in dummy mode.")
+            with open(output_path, "w") as f:
+                f.write("Dummy 3D model output.")
+            return True
 
         try:
-            self.logger.info(f"Converting image to 3D mesh: {image_path}")
-            mesh = self.pipeline(image=image_path)[0]
-            self.logger.info("3D mesh generated successfully")
-            return mesh
+            self.logger.info(f"Processing image: {input_image}")
+            result = self.pipeline(input_image)
+            result.save(output_path)
+            self.logger.info(f"3D model saved to: {output_path}")
+            return True
         except Exception as e:
-            self.logger.error(f"Error converting image to 3D mesh: {e}")
-            vertices = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
-            faces = [[0, 1, 2]]
-            return trimesh.Trimesh(vertices=vertices, faces=faces)
+            self.logger.error(f"Conversion failed: {e}")
+            return False
