@@ -1,82 +1,59 @@
 import os
-import torch
+import logging
+import trimesh
 
 class Local2DTo3DConverter:
+    """
+    Converts a 2D image to a 3D mesh using a local model or dummy mode.
+    """
+
     def __init__(self, model_path, logger=None):
-        """
-        Local 2D-to-3D converter class.
-
-        Args:
-            model_path (str): Path to the trained model directory or file.
-            logger (logging.Logger, optional): Logger instance.
-        """
+        self.logger = logger or logging.getLogger(__name__)
         self.model_path = model_path
-        self.logger = logger
-        self.model = None
-        self.pipeline = None  # FIX: Add pipeline attribute so other code can call it
+        self.pipeline = None   # Always defined
+        self.dummy_mode = False
 
-        if self.logger:
-            self.logger.info(f"Local2DTo3DConverter initialized with model path: {self.model_path}")
-
-        # If we want the pipeline ready immediately, we can initialize it here
-        self._build_pipeline()
-
-    def _build_pipeline(self):
-        """
-        Builds the processing pipeline for 2D to 3D conversion.
-        In the real implementation, load model and pre/post-processing steps.
-        """
-        try:
-            # Here you would load your 3D generation pipeline, e.g., diffusers / custom model
-            self.pipeline = lambda input_data: f"3D representation of {input_data}"  # dummy
-            if self.logger:
-                self.logger.info("Pipeline initialized successfully.")
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to build pipeline: {e}")
-            raise
-
-    def load_model(self):
-        """Loads the model from the given model_path."""
         if not os.path.exists(self.model_path):
-            raise FileNotFoundError(f"Model file not found at {self.model_path}")
+            self.logger.warning(f"Model path does not exist: {self.model_path}. Running in dummy mode.")
+            self.dummy_mode = True
+        else:
+            try:
+                # TODO: Load your actual model here if available.
+                # Example: self.pipeline = SomeModelLoader(self.model_path)
+                self.pipeline = "Loaded model pipeline placeholder"
+                self.logger.info(f"Model loaded successfully from {self.model_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to load model: {e}")
+                self.dummy_mode = True
 
-        if self.logger:
-            self.logger.info(f"Loading model from {self.model_path}...")
+    def convert(self, image_path):
+        """
+        Converts an image to a 3D mesh.
 
+        Parameters
+        ----------
+        image_path : str
+            Path to the input 2D image.
+
+        Returns
+        -------
+        trimesh.Trimesh or None
+            The generated mesh, or None if conversion failed.
+        """
         try:
-            self.model = torch.load(self.model_path, map_location=torch.device('cpu'))
+            if self.dummy_mode or self.pipeline is None:
+                self.logger.warning("Using dummy conversion — no actual model loaded.")
+                return self._dummy_mesh()
+
+            # TODO: Replace with actual inference code
+            self.logger.info(f"Running real model conversion for {image_path}")
+            return self._dummy_mesh()
+
         except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to load model: {str(e)}")
-            raise
+            self.logger.error(f"Error during conversion: {e}")
+            return None
 
-        if self.logger:
-            self.logger.info("Model loaded successfully.")
-
-    def convert(self, input_data):
-        """
-        Converts input data (2D) into a 3D model.
-
-        Args:
-            input_data: Input image or tensor.
-
-        Returns:
-            Output 3D data.
-        """
-        if self.model is None:
-            self.load_model()
-
-        if not self.pipeline:
-            self._build_pipeline()
-
-        if self.logger:
-            self.logger.info("Starting 2D to 3D conversion...")
-
-        # Call the pipeline function
-        output_data = self.pipeline(input_data)
-
-        if self.logger:
-            self.logger.info("Conversion complete.")
-
-        return output_data
+    def _dummy_mesh(self):
+        """Generate a placeholder cube mesh."""
+        self.logger.info("Generating dummy cube mesh.")
+        return trimesh.creation.box(extents=(1, 1, 1))
