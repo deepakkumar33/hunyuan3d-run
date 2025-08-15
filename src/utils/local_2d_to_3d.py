@@ -98,7 +98,10 @@ class Local2DTo3DConverter:
                 # Log some weight information for debugging
                 weight_info = []
                 for key, tensor in list(self.model_weights.items())[:5]:  # Show first 5
-                    weight_info.append(f"{key}: {tensor.shape}")
+                    if hasattr(tensor, 'shape'):
+                        weight_info.append(f"{key}: {tensor.shape}")
+                    else:
+                        weight_info.append(f"{key}: {type(tensor)}")
                 self.logger.info(f"Sample weights: {weight_info}")
             else:
                 self.logger.warning("No weights loaded, will use procedural generation")
