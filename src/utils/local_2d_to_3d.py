@@ -75,19 +75,22 @@ class Local2DTo3DConverter:
                 self.logger.info(f"Loading weights from: {file_path}")
                 try:
                     from safetensors.torch import load_file
-                    weights = load_file(file_path, device=self.device)
+                    weights = load_file(file_path, device="cpu")  # Load to CPU first
                     self.model_weights.update(weights)
                     self.logger.info(f"Loaded {len(weights)} tensors from {file_path}")
                 except Exception as e:
                     self.logger.warning(f"Could not load {file_path}: {e}")
-                    # Try loading as regular torch file
+                    # Try loading as regular torch file to CPU
                     try:
-                        weights = torch.load(file_path, map_location=self.device)
+                        weights = torch.load(file_path, map_location="cpu")  # Load to CPU
                         if isinstance(weights, dict):
                             self.model_weights.update(weights)
                             self.logger.info(f"Loaded {len(weights)} tensors from {file_path} (torch format)")
+                        else:
+                            self.logger.warning(f"Unexpected format in {file_path}: {type(weights)}")
                     except Exception as e2:
                         self.logger.warning(f"Could not load {file_path} as torch file either: {e2}")
+                        # Continue without this file
             
             if self.model_weights:
                 self.logger.info(f"Total loaded tensors: {len(self.model_weights)}")
