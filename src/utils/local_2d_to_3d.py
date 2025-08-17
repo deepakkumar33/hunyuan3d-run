@@ -1,50 +1,33 @@
-""" Handles loading and inference for a local Hunyuan3D model. """
-
 import os
-import torch
-import trimesh
-import logging
+from hunyuan3d import Hunyuan3D  # this uses your downloaded model
+from logger.logger import get_logger
 
 class Local2DTo3DConverter:
-    def __init__(self, model_dir, logger=None):
-        self.logger = logger or logging.getLogger(__name__)
-        self.model_dir = model_dir
+    def __init__(self, model_name, logger=None):
+        self.logger = logger or get_logger("Local2DTo3DConverter")
+        self.model_name = model_name
         self.model = None
-        self.dummy_mode = False
-        self._load_hunyuan_model()
+        self._load_model()
 
-    def _load_hunyuan_model(self):
+    def _load_model(self):
         try:
-            from hunyuan3d.shapegen.models.denoisers.hunyuan3ddit import HunYuanDiT
-            self.logger.info(f"Loading Hunyuan3D model from {self.model_dir}")
-
-            use_gpu = torch.cuda.is_available()
-            self.model = HunYuanDiT.load_from_checkpoint(
-                os.path.join(self.model_dir, "hunyuan3d-dit-v2-0.ckpt"),
-                map_location="cuda" if use_gpu else "cpu"
+            self.logger.info(f"Loading Hunyuan3D model from: {self.model_name}")
+            self.model = Hunyuan3D.from_pretrained(
+                self.model_name,
+                config_name="config.yaml",
+                checkpoint_name="model.fp16.ckpt"
             )
-
-            self.logger.info(f"Hunyuan3D model loaded successfully "
-                             f"on {'GPU' if use_gpu else 'CPU'}")
-
+            self.logger.info("Hunyuan3D model loaded successfully.")
         except Exception as e:
-            self.logger.error(f"❌ Failed to load Hunyuan3D model: {e}")
-            self.dummy_mode = True
+            self.logger.error(f"Error loading model: {e}", exc_info=True)
+            self.model = None
 
-    def convert(self, image_path):
-        if self.dummy_mode or self.model is None:
-            self.logger.warning("⚠️ Using dummy cube mesh (model not loaded).")
-            vertices = [[0,0,0],[1,0,0],[0,1,0]]
-            faces = [[0,1,2]]
-            return trimesh.Trimesh(vertices=vertices, faces=faces)
+    def convert(self, input_path, output_path):
+        if not self.model:
+            raise RuntimeError("Model not loaded")
 
-        try:
-            self.logger.info(f"Converting {image_path} → 3D mesh...")
-            mesh = self.model.infer(image_path)
-            self.logger.info("✅ 3D mesh generated successfully")
-            return mesh
-        except Exception as e:
-            self.logger.error(f"❌ Error converting image: {e}")
-            vertices = [[0,0,0],[1,0,0],[0,1,0]]
-            faces = [[0,1,2]]
-            return trimesh.Trimesh(vertices=vertices, faces=faces)
+        self.logger.info(f"Converting image: {input_path}")
+        mesh = self.model(input_path)  # run inference
+        mesh.export(output_path)       # export OBJ
+        self.logger.info(f"3D model saved at: {output_path}")
+        return output_path
