@@ -278,81 +278,21 @@ async function loadModel(modelUrl) {
       modelObject = asset;
     }
 
-    // Enhanced geometry validation and debugging
+    // Validate and process geometry
     let hasValidGeometry = false;
     let vertexCount = 0;
     let faceCount = 0;
-    let meshCount = 0;
-    let materialsInfo = [];
-    
-    console.log('=== MODEL ANALYSIS ===');
-    console.log('Model object type:', modelObject.type);
-    console.log('Model children count:', modelObject.children.length);
     
     modelObject.traverse((child) => {
-      console.log(`Child: ${child.type}, name: "${child.name}", position: [${child.position.x.toFixed(2)}, ${child.position.y.toFixed(2)}, ${child.position.z.toFixed(2)}]`);
-      
       if (child.isMesh && child.geometry) {
-        meshCount++;
         hasValidGeometry = true;
         
-        const geometry = child.geometry;
-        console.log(`\n--- MESH ${meshCount} ANALYSIS ---`);
-        console.log('Geometry type:', geometry.type);
-        console.log('Geometry attributes:', Object.keys(geometry.attributes));
-        
         // Count vertices and faces for debugging
-        if (geometry.attributes.position) {
-          const positions = geometry.attributes.position.count;
-          vertexCount += positions;
-          console.log('Vertex count:', positions);
-          
-          // Check for faces/indices
-          if (geometry.index) {
-            const faces = geometry.index.count / 3;
-            faceCount += faces;
-            console.log('Face count (from index):', faces);
-            console.log('Index array length:', geometry.index.count);
-          } else {
-            // For non-indexed geometry
-            const faces = positions / 3;
-            faceCount += faces;
-            console.log('Face count (non-indexed):', faces);
+        if (child.geometry.attributes.position) {
+          vertexCount += child.geometry.attributes.position.count;
+          if (child.geometry.index) {
+            faceCount += child.geometry.index.count / 3;
           }
-          
-          // Log first few vertices for debugging
-          const posArray = geometry.attributes.position.array;
-          console.log('First few vertices:');
-          for (let i = 0; i < Math.min(9, posArray.length); i += 3) {
-            console.log(`  Vertex ${i/3}: [${posArray[i].toFixed(3)}, ${posArray[i+1].toFixed(3)}, ${posArray[i+2].toFixed(3)}]`);
-          }
-        }
-        
-        // Check normals
-        if (geometry.attributes.normal) {
-          console.log('Has normals:', geometry.attributes.normal.count);
-        } else {
-          console.log('No normals - will compute them');
-          geometry.computeVertexNormals();
-        }
-        
-        // Check UV coordinates
-        if (geometry.attributes.uv) {
-          console.log('Has UV coordinates:', geometry.attributes.uv.count);
-        } else {
-          console.log('No UV coordinates');
-        }
-        
-        // Log material info
-        if (child.material) {
-          const matInfo = {
-            type: child.material.type,
-            color: child.material.color ? child.material.color.getHexString() : 'none',
-            transparent: child.material.transparent,
-            opacity: child.material.opacity
-          };
-          materialsInfo.push(matInfo);
-          console.log('Material:', matInfo);
         }
         
         // Apply enhanced material with better visibility
@@ -369,38 +309,25 @@ async function loadModel(modelUrl) {
         child.castShadow = true;
         child.receiveShadow = true;
         
-        // Force geometry to update
-        geometry.computeBoundingBox();
-        geometry.computeBoundingSphere();
+        // Ensure geometry has proper attributes
+        if (!child.geometry.attributes.normal) {
+          child.geometry.computeVertexNormals();
+        }
         
-        console.log('Bounding box:', geometry.boundingBox);
-        console.log('Bounding sphere:', geometry.boundingSphere);
-      } else if (child.type !== 'Group' && child.type !== 'Object3D') {
-        console.log('Non-mesh child type:', child.type);
+        // Force geometry to update
+        child.geometry.computeBoundingBox();
+        child.geometry.computeBoundingSphere();
       }
     });
 
-    console.log('\n=== SUMMARY ===');
-    console.log(`Total meshes: ${meshCount}`);
-    console.log(`Total vertices: ${vertexCount}`);
-    console.log(`Total faces: ${faceCount}`);
-    console.log(`Materials: ${materialsInfo.length}`);
+    console.log(`Model stats: ${vertexCount} vertices, ${faceCount} faces`);
 
-    // Critical check for valid geometry
     if (!hasValidGeometry) {
-      throw new Error('No valid mesh geometry found in model');
+      throw new Error('No valid geometry found in model');
     }
 
     if (vertexCount === 0) {
       throw new Error('Model contains no vertices');
-    }
-
-    if (faceCount === 0) {
-      console.warn('⚠️ WARNING: Model has vertices but no faces! This will result in invisible geometry.');
-      console.warn('This usually means the OBJ file is missing face definitions (f lines).');
-      
-      // Try to create point cloud visualization as fallback
-      createPointCloudVisualization(modelObject);
     }
 
     // Add model to scene
@@ -412,9 +339,12 @@ async function loadModel(modelUrl) {
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     
-    console.log('\n=== POSITIONING ===');
-    console.log('Model bounding box center:', center);
-    console.log('Model bounding box size:', size);
+    console.log('Model bounding box:', {
+      center: center,
+      size: size,
+      min: box.min,
+      max: box.max
+    });
 
     // Move model to center
     currentMesh.position.sub(center);
@@ -441,8 +371,13 @@ async function loadModel(modelUrl) {
       controls.update();
     }
 
-    // Remove the test cube since we have a model now
-    // (or keep it for reference if needed)
+    // Add a visible test cube to confirm scene is working
+    const testGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const testMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+    const testCube = new THREE.Mesh(testGeometry, testMaterial);
+    testCube.position.set(3, 3, 3);
+    scene.add(testCube);
+    console.log('Added test cube for reference');
 
     // Remove loading state
     hideLoadingState(container);
@@ -450,46 +385,15 @@ async function loadModel(modelUrl) {
     // Set up viewer controls
     setupViewerControls();
 
-    console.log('✅ Model loaded and positioned successfully');
+    console.log('Model loaded and positioned successfully');
+    console.log('Current mesh position:', currentMesh.position);
+    console.log('Current mesh scale:', currentMesh.scale);
+    console.log('Camera position:', camera.position);
 
   } catch (error) {
-    console.error('❌ Failed to load model:', error);
+    console.error('Failed to load model:', error);
     showErrorState(container, error.message);
   }
-}
-
-// Function to create point cloud visualization when faces are missing
-function createPointCloudVisualization(modelObject) {
-  console.log('Creating point cloud visualization for debugging...');
-  
-  modelObject.traverse((child) => {
-    if (child.isMesh && child.geometry && child.geometry.attributes.position) {
-      const geometry = child.geometry;
-      const positions = geometry.attributes.position;
-      
-      // Create points geometry
-      const pointsGeometry = new THREE.BufferGeometry();
-      pointsGeometry.setAttribute('position', positions);
-      
-      // Create points material
-      const pointsMaterial = new THREE.PointsMaterial({
-        color: 0xff0000,
-        size: 0.1,
-        sizeAttenuation: true
-      });
-      
-      // Create points object
-      const points = new THREE.Points(pointsGeometry, pointsMaterial);
-      points.position.copy(child.position);
-      points.rotation.copy(child.rotation);
-      points.scale.copy(child.scale);
-      
-      // Add to scene
-      scene.add(points);
-      
-      console.log('Added point cloud with', positions.count, 'points');
-    }
-  });
 }
 
 function showLoadingState(container) {
@@ -530,29 +434,14 @@ function showErrorState(container, message) {
     text-align: center;
     color: white;
     z-index: 1000;
-    max-width: 80%;
   `;
   errorDiv.innerHTML = `
     <i class="fas fa-exclamation-triangle" style="font-size: 2em; margin-bottom: 10px; color: #ff6b6b;"></i>
-    <h4>Failed to load 3D model</h4>
-    <p class="viewer-info" style="font-size: 0.9em; opacity: 0.7; margin: 10px 0;">${message}</p>
-    <div style="margin-top: 15px;">
-      <button class="btn btn-primary" onclick="window.location.reload()" style="margin: 5px;">
-        <i class="fas fa-refresh"></i> Reload Page
-      </button>
-      <button class="btn btn-secondary" onclick="console.log('Debug info:', window.lastModelInfo)" style="margin: 5px;">
-        <i class="fas fa-bug"></i> Debug Info
-      </button>
-    </div>
-    <details style="margin-top: 15px; text-align: left;">
-      <summary style="cursor: pointer; color: #ffd700;">Troubleshooting Tips</summary>
-      <ul style="font-size: 0.8em; margin: 10px 0; text-align: left;">
-        <li>Check if the OBJ file contains face definitions (f lines)</li>
-        <li>Verify the Hunyuan model is generating complete meshes</li>
-        <li>Try regenerating the 3D model with different settings</li>
-        <li>Check the console for detailed error messages</li>
-      </ul>
-    </details>
+    <p>Failed to load 3D model</p>
+    <p class="viewer-info" style="font-size: 0.9em; opacity: 0.7;">${message}</p>
+    <button class="btn btn-primary" onclick="window.location.reload()" style="margin-top: 10px;">
+      <i class="fas fa-refresh"></i> Reload Page
+    </button>
   `;
   container.appendChild(errorDiv);
 }
