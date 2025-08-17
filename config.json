@@ -1,5 +1,5 @@
 {
-    "model_name": "hunyuan3d-2/hunyuan3d-dit-v2-0-0",
+    "model_name": "hunyuan3d-2/hunyuan3d-dit-v2-0",
     "output_format": "obj",
     "output_mimetype": "text/plain",
     "output_filename": "model.obj"
