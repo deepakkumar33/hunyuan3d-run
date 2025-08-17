@@ -1,181 +1,78 @@
-"""
-API class for 2D to 3D model conversion endpoints.
-"""
-__all__ = ['ConvertAPI']
+""" API class for 2D to 3D model conversion endpoints. """
 
 import os
 import tempfile
 import uuid
-
 from flask import Blueprint, request, send_file, jsonify
 
 from src.utils.local_2d_to_3d import Local2DTo3DConverter
+from logger.logger import get_logger
+import json
 
 class ConvertAPI:
-    """
-    API class for 2D to 3D model conversion endpoints.
+    """ API class for 2D to 3D model conversion endpoints. """
 
-    Parameters
-    ----------
-    logger : logging.Logger
-        Logger instance for logging API events.
-    config : ConfigLoader
-        Configuration loader instance for model and output settings.
-    """
-    def __init__(self, logger, config):
-        self.logger = logger
-        self.config = config
-        self.api = Blueprint('api', __name__)
-        self.converter = self.load_converter()
-        self.add_routes()
+    def __init__(self, app=None):
+        self.logger = get_logger("ConvertAPI")
+        self.blueprint = Blueprint("convert_api", __name__)
+        self.converter = None
+        self.config = None
+        self._register_routes()
+        if app is not None:
+            app.register_blueprint(self.blueprint, url_prefix="/api")
+            self._load_config()
+            self._init_converter()
 
-    def load_converter(self):
-        """
-        Load and return the 2D to 3D conversion utility using the correct model path.
-        If the model is not loaded, log a warning.
-        """
-        try:
-            model_dir_name = self.config.get('model_name')
-            model_dir = os.path.join(os.getcwd(), 'models', model_dir_name)
-            if not os.path.isdir(model_dir):
-                self.logger.error(f"Model directory not found: {model_dir}")
-                return None
-            self.logger.info(f"Loading model from: {model_dir}")
-            converter = Local2DTo3DConverter(model_dir, logger=self.logger)
-            if converter.pipeline is None and not converter.dummy_mode:
-                self.logger.warning("2D-to-3D conversion requested but model is not loaded.")
-                return None
-            return converter
-        except Exception as e:
-            self.logger.error(f"Failed to initialize converter: {e}")
-            return None
+    def _load_config(self):
+        """Load configuration from config.json"""
+        config_path = os.path.join(os.path.dirname(__file__), "../../config.json")
+        config_path = os.path.abspath(config_path)
+        with open(config_path, "r") as f:
+            self.config = json.load(f)
+        self.logger.info(f"Loaded config: {self.config}")
 
-    def add_routes(self):
-        @self.api.route('/convert', methods=['POST'])
-        def convert_2d_to_3d():
-            """
-            Convert 2D image(s) to a 3D model in multiple formats and return model URLs.
+    def _init_converter(self):
+        """Initialize the local 2D-to-3D converter."""
+        model_name = self.config.get("model_name", "hunyuan3d-2/hunyuan3d-dit-v2-0")
+        self.converter = Local2DTo3DConverter(model_name, self.logger)
+        self.logger.info("Local2DTo3DConverter initialized successfully.")
 
-            Returns
-            -------
-            flask.Response
-                JSON with the model URLs for different formats or error JSON.
-            """
-            if not request.files or 'images' not in request.files:
-                self.logger.warning('Missing images in request')
-                return jsonify({'error': 'Missing images in request'}), 400
+    def _register_routes(self):
+        """Register API routes."""
+        @self.blueprint.route("/convert", methods=["POST"])
+        def convert():
+            if "file" not in request.files:
+                return jsonify({"error": "No file uploaded"}), 400
 
-            images = request.files.getlist('images')
-            if not images:
-                self.logger.warning('No images provided')
-                return jsonify({'error': 'No images provided'}), 400
+            file = request.files["file"]
+            if file.filename == "":
+                return jsonify({"error": "Empty filename"}), 400
 
-            # Create output directory
-            output_dir = os.path.join(os.getcwd(), 'output')
-            os.makedirs(output_dir, exist_ok=True)
+            # Save uploaded file to temp
+            temp_dir = tempfile.mkdtemp()
+            input_path = os.path.join(temp_dir, file.filename)
+            file.save(input_path)
 
-            # Generate unique model ID
-            model_id = str(uuid.uuid4())
-
-            # Save first image temporarily
-            image_file = images[0]
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_img:
-                image_file.save(temp_img.name)
-                temp_path = temp_img.name
+            job_id = str(uuid.uuid4())
+            output_path = os.path.join("output", f"{job_id}.obj")
 
             try:
-                # Use the conversion class
-                converter = self.converter
-                if converter is None:
-                    self.logger.warning("Converter is None, model not loaded.")
-                    os.remove(temp_path)
-                    return jsonify({'error': '3D model conversion is not available: model is not loaded.'}), 503
+                if not self.converter:
+                    return jsonify({"error": "Model not loaded"}), 503
 
-                mesh = converter.convert(temp_path)
-                if mesh is None:
-                    self.logger.warning("Conversion failed, no mesh generated.")
-                    os.remove(temp_path)
-                    return jsonify({'error': 'Conversion failed.'}), 503
+                self.converter.convert(input_path, output_path)
 
-                # Generate multiple formats
-                formats = ['obj', 'stl', 'ply']
-                generated_files = {}
-                primary_model_url = None
-
-                for fmt in formats:
-                    output_filename = f'{model_id}.{fmt}'
-                    output_path = os.path.join(output_dir, output_filename)
-                    
-                    try:
-                        mesh.export(output_path)
-                        file_url = f'/output/{output_filename}'
-                        generated_files[fmt] = file_url
-                        
-                        # Set primary model URL (prefer OBJ, then first successful format)
-                        if fmt == 'obj' or primary_model_url is None:
-                            primary_model_url = file_url
-                            
-                        self.logger.info(f'Generated {fmt.upper()} file: {output_filename}')
-                    except Exception as e:
-                        self.logger.warning(f'Failed to generate {fmt.upper()} format: {e}')
-                        # Continue with other formats even if one fails
-
-                # Check if at least one format was generated
-                if not generated_files:
-                    self.logger.error("No formats could be generated successfully")
-                    os.remove(temp_path)
-                    return jsonify({'error': 'Failed to generate any 3D model formats'}), 500
-
-                # Return model URLs
-                response_data = {
-                    'model_url': primary_model_url,
-                    'formats': generated_files,
-                    'model_id': model_id
-                }
-                
-                self.logger.info(f'2D to 3D conversion completed: {len(generated_files)} formats generated')
-                os.remove(temp_path)
-                return jsonify(response_data)
-
+                return jsonify({
+                    "job_id": job_id,
+                    "download_url": f"/api/output/{job_id}.obj"
+                })
             except Exception as e:
-                self.logger.error(f'Error during 2D to 3D conversion process: {e}')
-                os.remove(temp_path)
-                
-                # Clean up any partially generated files
-                for fmt in ['obj', 'stl', 'ply']:
-                    output_path = os.path.join(output_dir, f'{model_id}.{fmt}')
-                    if os.path.exists(output_path):
-                        try:
-                            os.remove(output_path)
-                        except:
-                            pass
-                
-                return jsonify({'error': 'Failed to generate 3D model', 'details': str(e)}), 500
+                self.logger.error(f"Conversion failed: {e}", exc_info=True)
+                return jsonify({"error": str(e)}), 500
 
-        @self.api.route('/output/<path:filename>')
-        def serve_model(filename):
-            """
-            Serve the generated model file.
-
-            Parameters
-            ----------
-            filename : str
-                Name of the model file to serve.
-
-            Returns
-            -------
-            flask.Response
-                The model file as a downloadable response.
-            """
-            try:
-                output_dir = os.path.join(os.getcwd(), 'output')
-                filepath = os.path.join(output_dir, filename)
-                if not os.path.exists(filepath):
-                    self.logger.warning(f'Model file not found: {filepath}')
-                    return jsonify({'error': 'File not found'}), 404
-
-                self.logger.info(f'Serving model file: {filepath}')
-                return send_file(filepath, as_attachment=True, download_name=filename)
-            except Exception as e:
-                self.logger.error(f'Error serving model file: {e}')
-                return jsonify({'error': 'Failed to serve model', 'details': str(e)}), 500
+        @self.blueprint.route("/output/<filename>", methods=["GET"])
+        def download(filename):
+            output_path = os.path.join("output", filename)
+            if not os.path.exists(output_path):
+                return jsonify({"error": "File not found"}), 404
+            return send_file(output_path, as_attachment=True)
