@@ -6,10 +6,8 @@ import torch
 from src.utils.configuration import ConfigLoader
 from src.logger.logger import Logger
 
-logger = Logger.get_logger("Local2DTo3DConverter")
-
-
-logger = get_logger(__name__)
+# Correct logger usage
+logger = Logger("Local2DTo3DConverter").get_logger()
 
 
 class Local2DTo3DConverter:
