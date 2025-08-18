@@ -53,7 +53,8 @@ def upload_jewelry():
         model_path = converter.convert(saved_paths, output_dir)
 
         logger.info(f"Model generated at: {model_path}")
-        model_url = f"/api/output/{job_id}/{os.path.basename(model_path)}"
+        # IMPORTANT: return without leading '/api' — blueprint is mounted at /api
+        model_url = f"/output/{job_id}/{os.path.basename(model_path)}"
         return jsonify({"model_url": model_url})
 
     except Exception as e:
