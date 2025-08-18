@@ -1,75 +1,44 @@
 import os
-import sys
-import trimesh
-from logger.logger import get_logger
-
-# Make sure local hunyuan3d folder is on Python path
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-HUNYUAN_DIR = os.path.join(BASE_DIR, "hunyuan3d")
-if HUNYUAN_DIR not in sys.path:
-    sys.path.insert(0, HUNYUAN_DIR)
-
-try:
-    from hunyuan3d import Hunyuan3D
-except ImportError:
-    raise ImportError("❌ Could not import hunyuan3d. Make sure the folder exists in hunyuan3d-run/hunyuan3d/")
+import uuid
+from hunyuan3d.shapegen import run as shapegen_run
+from hunyuan3d.texgen import run as texgen_run
 
 
 class Local2DTo3DConverter:
-    def __init__(self, model_name, logger=None):
-        self.logger = logger or get_logger("Local2DTo3DConverter")
-        self.model_name = model_name
-        self.model = None
-        self._load_model()
+    """
+    Local converter that takes a 2D image and produces a textured 3D model.
+    Uses the shapegen + texgen pipeline inside hunyuan3d.
+    """
 
-    def _load_model(self):
-        try:
-            self.logger.info(f"🔄 Loading Hunyuan3D model from: {self.model_name}")
-            self.model = Hunyuan3D.from_pretrained(
-                self.model_name,
-                config_name="config.yaml",
-                checkpoint_name="model.fp16.ckpt"
-            )
-            self.logger.info("✅ Hunyuan3D model loaded successfully.")
-        except Exception as e:
-            self.logger.error(f"❌ Error loading model: {e}", exc_info=True)
-            self.model = None
+    def __init__(self, output_dir: str = "outputs"):
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
 
-    def convert(self, input_path, output_path):
-        if not self.model:
-            raise RuntimeError("❌ Model not loaded")
+    def convert(self, image_path: str) -> str:
+        """
+        Converts an input image into a 3D model (OBJ/GLB).
+        
+        Parameters
+        ----------
+        image_path : str
+            Path to the input image.
+        
+        Returns
+        -------
+        str
+            Path to the generated 3D model file.
+        """
+        job_id = str(uuid.uuid4())
+        work_dir = os.path.join(self.output_dir, job_id)
+        os.makedirs(work_dir, exist_ok=True)
 
-        try:
-            self.logger.info(f"🔄 Running inference on: {input_path}")
+        # 1. Shape generation
+        print(f"[INFO] Generating shape for {image_path}...")
+        mesh_path = shapegen_run(image_path, work_dir)
 
-            # Try infer(), fallback to generate(), fallback to __call__()
-            if hasattr(self.model, "infer"):
-                result = self.model.infer(input_path)
-            elif hasattr(self.model, "generate"):
-                result = self.model.generate(input_path)
-            else:
-                result = self.model(input_path)
+        # 2. Texture generation
+        print(f"[INFO] Generating texture for {mesh_path}...")
+        model_path = texgen_run(mesh_path, work_dir)
 
-            # Extract vertices/faces
-            vertices = getattr(result, "vertices", None) or result.get("vertices")
-            faces = getattr(result, "faces", None) or result.get("faces")
-
-            if vertices is None:
-                raise RuntimeError("❌ Model did not return any vertices")
-
-            if not faces or len(faces) == 0:
-                self.logger.warning("⚠️ No faces returned. Building convex hull.")
-                mesh = trimesh.Trimesh(vertices=vertices)
-                mesh = mesh.convex_hull
-            else:
-                mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-
-            # Export model
-            mesh.export(output_path)
-            self.logger.info(f"✅ 3D model saved: {output_path}")
-
-            return output_path
-
-        except Exception as e:
-            self.logger.error(f"❌ Conversion failed: {e}", exc_info=True)
-            raise
+        print(f"[SUCCESS] 3D model created at: {model_path}")
+        return model_path
