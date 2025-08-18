@@ -7,7 +7,7 @@ API class for 2D->3D conversion endpoints.
 import os
 import tempfile
 import uuid
-from flask import Blueprint, request, jsonify, send_file, current_app
+from flask import Blueprint, request, jsonify, send_file
 
 from src.utils.local_2d_to_3d import Local2DTo3DConverter
 
@@ -49,8 +49,8 @@ class ConvertAPI:
                 converter = Local2DTo3DConverter(self.logger, self.config)
                 model_path = converter.convert(image_paths, output_dir)
 
-                # model_url that frontend can GET (blueprint is mounted at /api)
-                model_url = f"/api/output/{job_id}/{os.path.basename(model_path)}"
+                # IMPORTANT: return without leading '/api' — blueprint will be mounted at /api
+                model_url = f"/output/{job_id}/{os.path.basename(model_path)}"
                 return jsonify({"message": "3D model generated", "model_url": model_url})
 
             except Exception as e:
