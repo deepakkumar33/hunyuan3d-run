@@ -132,11 +132,12 @@ class Local2DTo3DConverter:
             self.logger.info(f"Found config: {found_config}; found weights: {found_weights}; loading from: {chosen_dir}")
 
             try:
-                # Use local_files_only and CPU device map to avoid GPU device mapping issues
+                # KEY FIX: pass subfolder="" so hy3dgen does not append another subfolder and call HF hub
                 self.pipeline = PipelineClass.from_pretrained(
                     chosen_dir,
                     local_files_only=True,
                     device_map="cpu",
+                    subfolder=""   # <-- prevent hy3dgen from appending default subfolder
                 )
                 self.dummy_mode = False
                 self.logger.info("Hunyuan3D pipeline loaded successfully.")
