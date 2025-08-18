@@ -72,11 +72,10 @@ class Local2DTo3DConverter:
 
             self.logger.info(f"Loading Hunyuan3D pipeline from {model_path} (local_files_only=True)")
             try:
-                # from_pretrained arguments may vary by package version — adapt conservatively
+                # Load from the resolved model_path
                 self.pipeline = PipelineClass.from_pretrained(
-                    model_dir,
+                    model_path,
                     local_files_only=True,
-                    subfolder=subfolder,
                     device_map="cpu"
                 )
                 self.dummy_mode = False
