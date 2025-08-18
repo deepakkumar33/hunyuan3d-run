@@ -4,7 +4,10 @@ import os
 import tempfile
 import torch
 from src.utils.configuration import ConfigLoader
-from src.logger.logger import get_logger
+from src.logger.logger import Logger
+
+logger = Logger.get_logger("Local2DTo3DConverter")
+
 
 logger = get_logger(__name__)
 
