@@ -1,102 +1,100 @@
 """
-Local 2D-to-3D conversion utility.
+Local 2D-to-3D conversion using Hunyuan3D checkpoint.
 """
-
 import os
-import tempfile
-import uuid
+from pathlib import Path
+import torch
+import logging
 
-from src.logger.logger import Logger
-
-# Import the real Hunyuan3D pipeline
+# Import the Hunyuan3D pipeline
 from hy3dgen.shapegen.pipelines import Hunyuan3DDiTPipeline
-
 
 class Local2DTo3DConverter:
     """
-    Local converter class for handling 2D-to-3D model conversion.
-    Uses the pretrained Hunyuan3D checkpoint and config.
+    Converts 2D images to 3D models using pretrained Hunyuan3D pipeline.
     """
 
-    def __init__(self):
-        self.logger = Logger(__name__).get_logger()
+    def __init__(self, logger, config):
+        self.logger = logger
+        self.config = config
+
+        # Detect device
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Determine model path
+        model_dir_candidates = [
+            config.get("ckpt_path", "/root/hunyuan3d-run/models/hunyuan3d-2/hunyuan3d-dit-v2-0/model.fp16.ckpt"),
+            config.get("safetensors_path", "/root/hunyuan3d-run/models/hunyuan3d-2/hunyuan3d-dit-v2-0/model.fp16.safetensors")
+        ]
+
+        self.model_path = None
+        for path in model_dir_candidates:
+            if os.path.exists(path):
+                self.model_path = path
+                break
+
+        if self.model_path is None:
+            raise FileNotFoundError("No valid checkpoint or safetensors file found!")
+
+        self.logger.info(f"Using model file: {self.model_path}")
         self.pipeline = None
         self._load_pipeline()
 
     def _load_pipeline(self):
         """
-        Load the Hunyuan3D pipeline from checkpoint or safetensors with config.
+        Load the Hunyuan3D pipeline from the checkpoint or safetensors file.
         """
-        base_dir = "/root/hunyuan3d-run/hunyuan3d/hy3dgen/shapegen/pipeline/pipeline_data/dit"
-
-        ckpt_path = os.path.join(base_dir, "model.fp16.ckpt")
-        safetensors_path = os.path.join(base_dir, "model.fp16.safetensors")
-        config_path = os.path.join(base_dir, "config.yaml")
-
-        self.logger.info("Loading Hunyuan3D pipeline...")
-
-        pipeline = None
         try:
-            if os.path.exists(ckpt_path):
-                self.logger.info(f"Attempting to load pipeline from CKPT: {ckpt_path} with config {config_path}")
-                pipeline = Hunyuan3DDiTPipeline.from_single_file(
-                    ckpt_path,
-                    config_path=config_path
-                )
-                self.logger.info("Successfully loaded pipeline from CKPT")
+            # Hunyuan3DDiTPipeline requires model_path + config.yaml path
+            # Assuming config.yaml is in same folder as checkpoint
+            model_folder = os.path.dirname(self.model_path)
+            config_path = os.path.join(model_folder, "config.yaml")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Missing config.yaml in {model_folder}")
+
+            self.logger.info(f"Loading Hunyuan3D pipeline from {self.model_path} with config {config_path}")
+            self.pipeline = Hunyuan3DDiTPipeline.from_single_file(
+                checkpoint_path=self.model_path,
+                config_path=config_path,
+                device=self.device
+            )
+            self.logger.info("Hunyuan3D pipeline loaded successfully.")
         except Exception as e:
-            self.logger.error(f"CKPT load failed: {e}")
+            self.logger.error(f"Failed to load pipeline: {e}", exc_info=True)
+            raise RuntimeError("Pipeline could not be loaded. Conversion impossible.") from e
 
-        if pipeline is None:
-            try:
-                if os.path.exists(safetensors_path):
-                    self.logger.info(f"Attempting to load pipeline from safetensors: {safetensors_path} with config {config_path}")
-                    pipeline = Hunyuan3DDiTPipeline.from_single_file(
-                        safetensors_path,
-                        config_path=config_path
-                    )
-                    self.logger.info("Successfully loaded pipeline from safetensors")
-            except Exception as e:
-                self.logger.error(f"Safetensors load failed: {e}")
-
-        if pipeline is None:
-            self.logger.error("Failed to load Hunyuan3D pipeline from both CKPT and safetensors.")
-        else:
-            self.pipeline = pipeline
-
-    def convert(self, image_path: str) -> str:
+    def convert(self, image_paths, output_dir):
         """
-        Convert a 2D image into a 3D model.
+        Convert a list of 2D images into a 3D model.
 
         Parameters
         ----------
-        image_path : str
-            Path to the input image.
+        image_paths : list[str]
+            Paths to input images.
+        output_dir : str
+            Directory to save output OBJ file.
 
         Returns
         -------
         str
-            Path to the generated 3D model (.obj).
+            Path to generated 3D OBJ file.
         """
-        if self.pipeline is None:
-            raise RuntimeError("Pipeline not loaded. Cannot perform conversion.")
+        if not self.pipeline:
+            raise RuntimeError("Pipeline not initialized!")
 
-        self.logger.info(f"Starting 2D-to-3D conversion for {image_path}")
+        os.makedirs(output_dir, exist_ok=True)
+        output_obj = os.path.join(output_dir, "model.obj")
 
-        # Create a temporary directory to save results
-        output_dir = tempfile.mkdtemp()
-        output_path = os.path.join(output_dir, f"{uuid.uuid4()}.obj")
-
+        self.logger.info(f"Converting {len(image_paths)} images to 3D model...")
         try:
-            # Run the pipeline with your input image
-            result = self.pipeline(
-                image_path=image_path,
-                output_path=output_path
+            # Run actual Hunyuan3D inference
+            self.pipeline.generate_3d(
+                image_paths=image_paths,
+                output_path=output_obj
             )
-
-            self.logger.info(f"3D model successfully generated at {output_path}")
-            return output_path
-
         except Exception as e:
-            self.logger.error(f"Conversion failed: {e}")
-            raise
+            self.logger.error(f"3D conversion failed: {e}", exc_info=True)
+            raise RuntimeError("3D conversion failed") from e
+
+        self.logger.info(f"3D model successfully written to {output_obj}")
+        return output_obj
