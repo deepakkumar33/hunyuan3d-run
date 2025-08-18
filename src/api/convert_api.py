@@ -3,21 +3,26 @@
 import os
 import tempfile
 import uuid
+import json
+import logging
 from flask import Blueprint, request, send_file, jsonify
 
 from src.utils.local_2d_to_3d import Local2DTo3DConverter
-from logger.logger import get_logger
-import json
+
 
 class ConvertAPI:
     """ API class for 2D to 3D model conversion endpoints. """
 
     def __init__(self, app=None):
-        self.logger = get_logger("ConvertAPI")
+        # Use built-in logger
+        self.logger = logging.getLogger("ConvertAPI")
+        logging.basicConfig(level=logging.INFO)
+
         self.blueprint = Blueprint("convert_api", __name__)
         self.converter = None
         self.config = None
         self._register_routes()
+
         if app is not None:
             app.register_blueprint(self.blueprint, url_prefix="/api")
             self._load_config()
@@ -27,18 +32,30 @@ class ConvertAPI:
         """Load configuration from config.json"""
         config_path = os.path.join(os.path.dirname(__file__), "../../config.json")
         config_path = os.path.abspath(config_path)
-        with open(config_path, "r") as f:
-            self.config = json.load(f)
-        self.logger.info(f"Loaded config: {self.config}")
+
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                self.config = json.load(f)
+            self.logger.info(f"Loaded config: {self.config}")
+        else:
+            self.logger.warning("No config.json found, using defaults.")
+            self.config = {}
 
     def _init_converter(self):
         """Initialize the local 2D-to-3D converter."""
-        model_name = self.config.get("model_name", "hunyuan3d-2/hunyuan3d-dit-v2-0")
-        self.converter = Local2DTo3DConverter(model_name, self.logger)
+        output_dir = self.config.get("output_dir", "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Initialize converter
+        self.converter = Local2DTo3DConverter(
+            input_path=None,  # Will be set per-request
+            output_dir=output_dir
+        )
         self.logger.info("Local2DTo3DConverter initialized successfully.")
 
     def _register_routes(self):
         """Register API routes."""
+
         @self.blueprint.route("/convert", methods=["POST"])
         def convert():
             if "file" not in request.files:
@@ -54,25 +71,35 @@ class ConvertAPI:
             file.save(input_path)
 
             job_id = str(uuid.uuid4())
-            output_path = os.path.join("output", f"{job_id}.obj")
+            output_dir = os.path.join("output", job_id)
+            os.makedirs(output_dir, exist_ok=True)
 
             try:
                 if not self.converter:
                     return jsonify({"error": "Model not loaded"}), 503
 
-                self.converter.convert(input_path, output_path)
+                # Run conversion
+                converter = Local2DTo3DConverter(input_path, output_dir)
+                result = converter.convert()
 
                 return jsonify({
                     "job_id": job_id,
-                    "download_url": f"/api/output/{job_id}.obj"
+                    "results": result,
+                    "download_url": f"/api/output/{job_id}"
                 })
             except Exception as e:
                 self.logger.error(f"Conversion failed: {e}", exc_info=True)
                 return jsonify({"error": str(e)}), 500
 
-        @self.blueprint.route("/output/<filename>", methods=["GET"])
-        def download(filename):
-            output_path = os.path.join("output", filename)
-            if not os.path.exists(output_path):
-                return jsonify({"error": "File not found"}), 404
-            return send_file(output_path, as_attachment=True)
+        @self.blueprint.route("/output/<job_id>", methods=["GET"])
+        def download(job_id):
+            output_dir = os.path.join("output", job_id)
+            if not os.path.exists(output_dir):
+                return jsonify({"error": "Result not found"}), 404
+
+            # Find first OBJ file in output folder
+            for fname in os.listdir(output_dir):
+                if fname.endswith(".obj"):
+                    return send_file(os.path.join(output_dir, fname), as_attachment=True)
+
+            return jsonify({"error": "No OBJ file generated"}), 404
