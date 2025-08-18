@@ -3,7 +3,7 @@
 import os
 import tempfile
 import torch
-from src.utils.config_loader import ConfigLoader
+from src.utils.configuration import ConfigLoader
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
