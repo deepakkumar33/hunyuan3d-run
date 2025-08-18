@@ -23,7 +23,9 @@ logger = Logger(__name__).get_logger()
 cfg = ConfigLoader()
 convert_api = ConvertAPI(logger, cfg)
 config_api = ConfigAPI(cfg)
-app.register_blueprint(convert_api.api, url_prefix='/api')
+
+# ✅ FIXED: use .blueprint instead of .api
+app.register_blueprint(convert_api.blueprint, url_prefix='/api')
 app.register_blueprint(config_api.api, url_prefix='/api')
 
 # ✅ New endpoint: /upload_jewelry -> run real 2D→3D conversion
