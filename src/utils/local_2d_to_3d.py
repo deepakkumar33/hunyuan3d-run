@@ -63,12 +63,17 @@ class Local2DTo3DConverter:
         self.logger.info(f"Output will be saved as: {output_path}")
 
         try:
-            # call pipeline (depends on API, adapt if different)
-            self.pipeline.generate(
+            # New Hunyuan3D API: call pipeline directly
+            result = self.pipeline(
                 input_images=image_paths,
                 output_path=output_path,
                 output_format=output_format
             )
+
+            # Some versions return the path; others just save the file
+            if result is not None:
+                output_path = result
+
         except Exception as e:
             self.logger.error(f"3D conversion failed: {e}", exc_info=True)
             raise RuntimeError("Conversion failed.") from e
