@@ -1,114 +1,81 @@
+"""
+Local 2D -> 3D converter wrapper for Hunyuan3D pipeline.
+
+- Accepts a list of image paths
+- Saves 3D model to specified output directory
+"""
+
 import os
-import uuid
 import logging
-import traceback
-import glob
-
-try:
-    import trimesh
-except ImportError:
-    trimesh = None
-
+import uuid
 from Hunyuan3D_2_1.hy3dshape.pipelines import Hunyuan3DDiTPipeline
-
+from Hunyuan3D_2_1.hy3dshape.preprocessors import Preprocessor
 
 class Local2DTo3DConverter:
-    """
-    Robust Local2DTo3DConverter with improved model-file detection and verbose logging.
-
-    - Accepts common weight filenames:
-        model.fp16.safetensors, model.fp16.ckpt, model.safetensors, model.ckpt, *.ckpt, *.pt, *.pth
-    - Logs candidate folders and discovered files to help debugging.
-    - Falls back to a small dummy OBJ if pipeline cannot be loaded.
-    """
-
-    def __init__(self, model_dir="./Hunyuan3D_2_1", output_dir="./outputs"):
-        self.model_dir = model_dir
-        self.output_dir = output_dir
-        os.makedirs(self.output_dir, exist_ok=True)
-        self.pipeline = None
-        self._load_pipeline()
-
-    def _find_model_file(self):
+    def __init__(self, logger: logging.Logger, output_root: str):
         """
-        Scan the model_dir for valid checkpoint files.
+        :param logger: Python logger
+        :param output_root: str path where all output models will be saved
         """
-        candidates = [
-            "model.fp16.safetensors",
-            "model.fp16.ckpt",
-            "model.safetensors",
-            "model.ckpt",
-        ]
-        exts = ["*.ckpt", "*.pt", "*.pth", "*.safetensors"]
+        self.logger = logger
+        self.output_root = output_root
+        os.makedirs(self.output_root, exist_ok=True)
 
-        logging.info(f"[Local2DTo3DConverter] Scanning for model files in {self.model_dir}")
+        # load Hunyuan3D pipeline
+        model_ckpt = os.path.join("models", "hunyuan3d-2", "hunyuan3d-dit-v2-0", "model.fp16.ckpt")
+        config_path = os.path.join("models", "hunyuan3d-2", "hunyuan3d-dit-v2-0", "config.yaml")
 
-        # direct candidates
-        for c in candidates:
-            path = os.path.join(self.model_dir, c)
-            if os.path.exists(path):
-                logging.info(f"Found model file: {path}")
-                return path
-
-        # glob fallback
-        for ext in exts:
-            files = glob.glob(os.path.join(self.model_dir, "**", ext), recursive=True)
-            if files:
-                logging.info(f"Found model file: {files[0]}")
-                return files[0]
-
-        logging.error("No model file found in model_dir.")
-        return None
-
-    def _load_pipeline(self):
-        try:
-            model_file = self._find_model_file()
-            if model_file is None:
-                raise FileNotFoundError("No model weights found.")
-
-            logging.info(f"Loading Hunyuan3DDiTPipeline from: {model_file}")
-            # instantiate pipeline
-            self.pipeline = Hunyuan3DDiTPipeline.from_pretrained(model_file)
-            logging.info("Pipeline successfully loaded.")
-
-        except Exception as e:
-            logging.error(f"Failed to load pipeline: {e}")
-            traceback.print_exc()
-            self.pipeline = None
-
-    def convert(self, image_path):
-        """
-        Convert a single 2D image into a 3D model using the pipeline.
-        Falls back to dummy cube if pipeline not available.
-        """
-        job_id = str(uuid.uuid4())[:8]
-        output_path = os.path.join(self.output_dir, f"model_{job_id}.obj")
-
-        if self.pipeline is None:
-            logging.warning("Pipeline not available. Using dummy cube instead.")
-            if trimesh:
-                mesh = trimesh.creation.box(extents=(1, 1, 1))
-                mesh.export(output_path)
-            else:
-                with open(output_path, "w") as f:
-                    f.write("o cube\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n")
-                    f.write("v 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n")
-                    f.write("f 1 2 3 4\nf 5 6 7 8\nf 1 5 8 4\nf 2 6 7 3\nf 1 2 6 5\nf 4 3 7 8\n")
-            return output_path
+        self.logger.info(f"✅ Using model checkpoint: {model_ckpt}")
+        self.logger.info(f"✅ Using model config: {config_path}")
 
         try:
-            logging.info(f"Running 2D-to-3D conversion for {image_path}")
-            # Dummy inference step (replace with actual pipeline call later)
-            if trimesh:
-                mesh = trimesh.creation.icosphere(radius=1)
-                mesh.export(output_path)
-            else:
-                with open(output_path, "w") as f:
-                    f.write("# dummy sphere obj\n")
-            logging.info(f"3D model saved to {output_path}")
-            return output_path
-
+            self.pipeline = Hunyuan3DDiTPipeline.from_pretrained(
+                model_ckpt,
+                config=config_path,
+                device="cuda"
+            )
+            self.logger.info("✅ Hunyuan3D pipeline loaded successfully")
         except Exception as e:
-            logging.error(f"Conversion failed: {e}")
-            traceback.print_exc()
-            return None
+            self.logger.error(f"Failed to load pipeline: {e}", exc_info=True)
+            raise RuntimeError("Pipeline loading failed") from e
+
+        self.preprocessor = Preprocessor(size=512)  # make sure input images are resized correctly
+
+    def convert(self, image_paths, output_dir=None):
+        """
+        Convert list of image paths to a single 3D model.
+        :param image_paths: list[str]
+        :param output_dir: str, optional. Default uses self.output_root/job_id
+        :return: str path to generated OBJ
+        """
+        if output_dir is None:
+            job_id = str(uuid.uuid4())
+            output_dir = os.path.join(self.output_root, job_id)
+        os.makedirs(output_dir, exist_ok=True)
+
+        self.logger.info(f"Starting 2D->3D conversion for {len(image_paths)} images")
+        self.logger.info(f"Output directory: {output_dir}")
+
+        processed_images = []
+        for img_path in image_paths:
+            if not os.path.exists(img_path):
+                self.logger.warning(f"Image not found, skipping: {img_path}")
+                continue
+            img = self.preprocessor.load_image(img_path)
+            if img is None:
+                self.logger.warning(f"Image could not be loaded, skipping: {img_path}")
+                continue
+            processed_images.append(img)
+
+        if not processed_images:
+            raise RuntimeError("No valid images to convert")
+
+        try:
+            result = self.pipeline(processed_images)
+            output_obj_path = os.path.join(output_dir, "model.obj")
+            result.save(output_obj_path)
+            self.logger.info(f"✅ 3D model saved at: {output_obj_path}")
+            return output_obj_path
+        except Exception as e:
+            self.logger.error(f"3D conversion failed: {e}", exc_info=True)
+            raise RuntimeError("Conversion failed") from e
