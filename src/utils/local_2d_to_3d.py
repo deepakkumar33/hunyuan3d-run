@@ -1,11 +1,13 @@
 """
-Local 2D -> 3D converter utility
+Local 2D -> 3D converter utility (robust multi-image version)
 """
 
 import os
+import glob
 import logging
-from hy3dgen.shapegen import Hunyuan3DDiTPipeline  # ensure installed
 from pathlib import Path
+from hy3dgen.shapegen import Hunyuan3DDiTPipeline  # ensure installed
+
 
 class Local2DTo3DConverter:
     def __init__(self, logger: logging.Logger, config: dict):
@@ -22,13 +24,31 @@ class Local2DTo3DConverter:
         if not model_name:
             raise ValueError("❌ 'model_name' missing in config.json")
 
-        # construct full path to checkpoint and config
         model_base = Path("/root/hunyuan3d-run/models") / model_name
-        ckpt_file = model_base / "model.fp16.ckpt"
-        cfg_file = model_base / "config.yaml"
 
-        if not ckpt_file.is_file():
-            raise FileNotFoundError(f"❌ Checkpoint not found: {ckpt_file}")
+        # look for checkpoint files in priority order
+        ckpt_candidates = [
+            "model.fp16.safetensors",
+            "model.fp16.ckpt",
+            "model.safetensors",
+            "model.ckpt",
+            "*.ckpt",
+            "*.pt",
+            "*.pth",
+        ]
+        ckpt_file = None
+        for pattern in ckpt_candidates:
+            matches = list(model_base.glob(pattern))
+            if matches:
+                ckpt_file = matches[0]
+                break
+
+        if not ckpt_file:
+            raise FileNotFoundError(
+                f"❌ No checkpoint found in {model_base}. Expected one of: {ckpt_candidates}"
+            )
+
+        cfg_file = model_base / "config.yaml"
         if not cfg_file.is_file():
             raise FileNotFoundError(f"❌ Config YAML not found: {cfg_file}")
 
@@ -36,7 +56,6 @@ class Local2DTo3DConverter:
         self.logger.info(f"✅ Using model config: {cfg_file}")
 
         try:
-            # load the pipeline (new Hunyuan3D API requires ckpt_path positional arg)
             self.pipeline = Hunyuan3DDiTPipeline.from_single_file(
                 ckpt_path=str(ckpt_file),
                 config_path=str(cfg_file),
@@ -44,36 +63,38 @@ class Local2DTo3DConverter:
             self.logger.info("✅ Hunyuan3D pipeline loaded successfully")
         except Exception as e:
             self.logger.error(f"Failed to load pipeline: {e}", exc_info=True)
-            raise RuntimeError("Pipeline could not be loaded. Conversion impossible.") from e
+            raise RuntimeError("Pipeline could not be loaded.") from e
 
     def convert(self, image_paths, output_dir):
         """
-        Convert list of images to a 3D model file.
+        Convert multiple images (front, side, back, etc.) to a 3D model file.
         Returns the path to the generated model.
         """
         if not self.pipeline:
             raise RuntimeError("Pipeline not loaded. Cannot convert images.")
+
+        # ensure all image paths exist
+        valid_images = [str(Path(p).resolve()) for p in image_paths if Path(p).is_file()]
+        if not valid_images:
+            raise ValueError("❌ No valid input images provided.")
+        self.logger.info(f"Found {len(valid_images)} valid input images.")
 
         os.makedirs(output_dir, exist_ok=True)
         output_filename = self.config.get("output_filename", "model.obj")
         output_format = self.config.get("output_format", "obj")
         output_path = os.path.join(output_dir, output_filename)
 
-        self.logger.info(f"Starting 2D->3D conversion for {len(image_paths)} images")
+        self.logger.info(f"🚀 Starting 2D->3D conversion with {len(valid_images)} images")
         self.logger.info(f"Output will be saved as: {output_path}")
 
         try:
-            # New Hunyuan3D API: call pipeline directly
             result = self.pipeline(
-                input_images=image_paths,
+                input_images=valid_images,   # multi-image support
                 output_path=output_path,
-                output_format=output_format
+                output_format=output_format,
             )
-
-            # Some versions return the path; others just save the file
             if result is not None:
                 output_path = result
-
         except Exception as e:
             self.logger.error(f"3D conversion failed: {e}", exc_info=True)
             raise RuntimeError("Conversion failed.") from e
