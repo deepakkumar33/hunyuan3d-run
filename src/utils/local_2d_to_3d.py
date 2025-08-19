@@ -1,81 +1,65 @@
 """
-Local 2D -> 3D converter wrapper for Hunyuan3D pipeline.
+Robust Local2DTo3DConverter for Hunyuan3D
 
-- Accepts a list of image paths
-- Saves 3D model to specified output directory
+- Works with Hunyuan3D_2_1 folder
+- Automatically handles uploaded image paths
+- Uses correct ImageProcessor from preprocessors.py
+- Returns OBJ model path
 """
 
 import os
-import logging
 import uuid
+import logging
+import traceback
+
+# Import the correct pipeline class
 from Hunyuan3D_2_1.hy3dshape.pipelines import Hunyuan3DDiTPipeline
-from Hunyuan3D_2_1.hy3dshape.preprocessors import Preprocessor
+from Hunyuan3D_2_1.hy3dshape.preprocessors import ImageProcessor
 
 class Local2DTo3DConverter:
-    def __init__(self, logger: logging.Logger, output_root: str):
-        """
-        :param logger: Python logger
-        :param output_root: str path where all output models will be saved
-        """
-        self.logger = logger
-        self.output_root = output_root
+    def __init__(self, logger=None, config=None, output_root=None):
+        self.logger = logger or logging.getLogger(__name__)
+        self.config = config  # Keep reference if needed
+        self.output_root = output_root or os.path.join(os.getcwd(), "output")
         os.makedirs(self.output_root, exist_ok=True)
 
-        # load Hunyuan3D pipeline
-        model_ckpt = os.path.join("models", "hunyuan3d-2", "hunyuan3d-dit-v2-0", "model.fp16.ckpt")
-        config_path = os.path.join("models", "hunyuan3d-2", "hunyuan3d-dit-v2-0", "config.yaml")
+        # Initialize image processor
+        self.image_processor = ImageProcessor(size=512)  # you can adjust size
 
-        self.logger.info(f"✅ Using model checkpoint: {model_ckpt}")
-        self.logger.info(f"✅ Using model config: {config_path}")
-
+        # Load Hunyuan3D pipeline
         try:
-            self.pipeline = Hunyuan3DDiTPipeline.from_pretrained(
-                model_ckpt,
-                config=config_path,
-                device="cuda"
-            )
-            self.logger.info("✅ Hunyuan3D pipeline loaded successfully")
+            self.logger.info("🚀 Loading Hunyuan3D pipeline...")
+            model_ckpt = os.path.join(os.getcwd(), "Hunyuan3D_2_1", "models", "hunyuan3d-dit-v2-0", "model.fp16.ckpt")
+            config_yaml = os.path.join(os.getcwd(), "Hunyuan3D_2_1", "models", "hunyuan3d-dit-v2-0", "config.yaml")
+            self.pipeline = Hunyuan3DDiTPipeline(model_ckpt, config_yaml)
+            self.logger.info("✅ Pipeline loaded successfully")
         except Exception as e:
-            self.logger.error(f"Failed to load pipeline: {e}", exc_info=True)
-            raise RuntimeError("Pipeline loading failed") from e
-
-        self.preprocessor = Preprocessor(size=512)  # make sure input images are resized correctly
+            self.logger.error(f"Failed to load pipeline: {e}")
+            raise
 
     def convert(self, image_paths, output_dir=None):
-        """
-        Convert list of image paths to a single 3D model.
-        :param image_paths: list[str]
-        :param output_dir: str, optional. Default uses self.output_root/job_id
-        :return: str path to generated OBJ
-        """
-        if output_dir is None:
-            job_id = str(uuid.uuid4())
-            output_dir = os.path.join(self.output_root, job_id)
+        output_dir = output_dir or os.path.join(self.output_root, str(uuid.uuid4()))
         os.makedirs(output_dir, exist_ok=True)
 
-        self.logger.info(f"Starting 2D->3D conversion for {len(image_paths)} images")
-        self.logger.info(f"Output directory: {output_dir}")
-
-        processed_images = []
-        for img_path in image_paths:
-            if not os.path.exists(img_path):
-                self.logger.warning(f"Image not found, skipping: {img_path}")
-                continue
-            img = self.preprocessor.load_image(img_path)
-            if img is None:
-                self.logger.warning(f"Image could not be loaded, skipping: {img_path}")
-                continue
-            processed_images.append(img)
-
-        if not processed_images:
-            raise RuntimeError("No valid images to convert")
+        if not image_paths:
+            raise ValueError("No images provided for conversion")
 
         try:
+            self.logger.info(f"Starting 2D→3D conversion for {len(image_paths)} images")
+            # Prepare images
+            processed_images = [self.image_processor.load_image(p) for p in image_paths]
+
+            # Run the Hunyuan3D pipeline
             result = self.pipeline(processed_images)
-            output_obj_path = os.path.join(output_dir, "model.obj")
-            result.save(output_obj_path)
-            self.logger.info(f"✅ 3D model saved at: {output_obj_path}")
-            return output_obj_path
+
+            # Save OBJ
+            model_path = os.path.join(output_dir, "model.obj")
+            result.save(model_path)
+
+            self.logger.info(f"3D model saved to: {model_path}")
+            return model_path
+
         except Exception as e:
-            self.logger.error(f"3D conversion failed: {e}", exc_info=True)
-            raise RuntimeError("Conversion failed") from e
+            self.logger.error(f"3D conversion failed: {e}")
+            traceback.print_exc()
+            raise RuntimeError("Conversion failed.") from e
