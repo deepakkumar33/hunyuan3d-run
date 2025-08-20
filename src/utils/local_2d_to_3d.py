@@ -305,19 +305,103 @@ class Local2DTo3DConverter:
                 # Load and process image
                 image = Image.open(img_path).convert('RGB')
                 processed = self.image_processor(image)
-                processed_images.append(processed)
                 
-                self.logger.debug(f"✅ Preprocessed image: {img_path}")
+                # Extract tensor from processed result (handle both dict and tensor returns)
+                if isinstance(processed, dict):
+                    # If preprocessor returns a dict, extract the image tensor
+                    if "image" in processed:
+                        image_tensor = processed["image"]
+                        self.logger.debug(f"✅ Extracted image tensor from dict for: {img_path}")
+                    elif "pixel_values" in processed:
+                        image_tensor = processed["pixel_values"]
+                        self.logger.debug(f"✅ Extracted pixel_values tensor from dict for: {img_path}")
+                    elif "input" in processed:
+                        image_tensor = processed["input"]
+                        self.logger.debug(f"✅ Extracted input tensor from dict for: {img_path}")
+                    else:
+                        # Try to find the first tensor value in the dict
+                        tensor_values = [v for v in processed.values() if isinstance(v, torch.Tensor)]
+                        if tensor_values:
+                            image_tensor = tensor_values[0]
+                            self.logger.debug(f"✅ Using first tensor from dict for: {img_path}")
+                        else:
+                            raise ValueError(f"No tensor found in preprocessor output dict: {list(processed.keys())}")
+                elif isinstance(processed, torch.Tensor):
+                    # If preprocessor returns a tensor directly
+                    image_tensor = processed
+                    self.logger.debug(f"✅ Using tensor directly for: {img_path}")
+                else:
+                    # Handle other types (list, tuple, etc.)
+                    if hasattr(processed, '__iter__') and not isinstance(processed, str):
+                        # Try to find a tensor in an iterable
+                        tensor_items = [item for item in processed if isinstance(item, torch.Tensor)]
+                        if tensor_items:
+                            image_tensor = tensor_items[0]
+                            self.logger.debug(f"✅ Extracted tensor from iterable for: {img_path}")
+                        else:
+                            raise ValueError(f"No tensor found in preprocessor output: {type(processed)}")
+                    else:
+                        raise ValueError(f"Unexpected preprocessor output type: {type(processed)}")
+                
+                # Ensure we have a valid tensor
+                if not isinstance(image_tensor, torch.Tensor):
+                    raise ValueError(f"Extracted item is not a tensor: {type(image_tensor)}")
+                
+                # Ensure tensor has the right dimensions (add batch dim if needed)
+                if image_tensor.dim() == 3:  # [C, H, W]
+                    image_tensor = image_tensor.unsqueeze(0)  # [1, C, H, W]
+                elif image_tensor.dim() == 2:  # [H, W] - grayscale
+                    image_tensor = image_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+                elif image_tensor.dim() == 4:  # [B, C, H, W] - already batched
+                    if image_tensor.shape[0] == 1:
+                        pass  # Single image batch, keep as is
+                    else:
+                        # Multiple images in batch, take first one
+                        image_tensor = image_tensor[0:1]
+                        self.logger.debug(f"✅ Extracted first image from batch for: {img_path}")
+                
+                processed_images.append(image_tensor)
+                self.logger.debug(f"✅ Preprocessed image {img_path}: shape={image_tensor.shape}, dtype={image_tensor.dtype}")
                 
             except Exception as e:
                 self.logger.error(f"Failed to preprocess {img_path}: {e}")
+                self.logger.error(f"Preprocessor output type: {type(processed) if 'processed' in locals() else 'unknown'}")
+                if 'processed' in locals() and isinstance(processed, dict):
+                    self.logger.error(f"Dict keys: {list(processed.keys())}")
                 raise
         
+        # Ensure all tensors have the same shape for stacking
+        if len(processed_images) > 1:
+            # Get target shape from first tensor
+            target_shape = processed_images[0].shape
+            
+            # Verify all tensors have compatible shapes
+            for i, tensor in enumerate(processed_images):
+                if tensor.shape != target_shape:
+                    self.logger.warning(f"Tensor {i} shape mismatch: {tensor.shape} vs {target_shape}")
+                    # Try to reshape or crop to match
+                    if tensor.dim() == target_shape.__len__():
+                        # Same number of dimensions, try to interpolate
+                        if tensor.dim() == 4:  # [B, C, H, W]
+                            tensor = torch.nn.functional.interpolate(
+                                tensor, size=target_shape[2:], mode='bilinear', align_corners=False
+                            )
+                            processed_images[i] = tensor
+                            self.logger.debug(f"✅ Resized tensor {i} to match target shape")
+        
         # Stack images into batch
-        if len(processed_images) == 1:
-            image_batch = processed_images[0].unsqueeze(0).to(self.device)
-        else:
-            image_batch = torch.stack(processed_images).to(self.device)
+        try:
+            if len(processed_images) == 1:
+                image_batch = processed_images[0].to(self.device)
+            else:
+                image_batch = torch.cat(processed_images, dim=0).to(self.device)
+            
+            self.logger.debug(f"✅ Created image batch: shape={image_batch.shape}, dtype={image_batch.dtype}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to stack/concatenate tensors: {e}")
+            self.logger.error(f"Tensor shapes: {[t.shape for t in processed_images]}")
+            raise RuntimeError(f"Could not create image batch: {e}")
         
         # Convert to half precision if model uses half precision
         if self.use_half_precision and image_batch.dtype == torch.float32:
