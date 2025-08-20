@@ -17,35 +17,82 @@ try:
     import os
     
     # Add Hunyuan3D_2_1 to Python path if not already there
-    hunyuan_path = os.path.join(os.getcwd(), 'Hunyuan3D_2_1')
-    if os.path.exists(hunyuan_path) and hunyuan_path not in sys.path:
-        sys.path.insert(0, hunyuan_path)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    hunyuan_path = os.path.join(project_root, 'Hunyuan3D_2_1')
     
+    # Also try current working directory as fallback
+    fallback_path = os.path.join(os.getcwd(), 'Hunyuan3D_2_1')
+    
+    if os.path.exists(hunyuan_path):
+        if hunyuan_path not in sys.path:
+            sys.path.insert(0, hunyuan_path)
+        import_path = hunyuan_path
+    elif os.path.exists(fallback_path):
+        if fallback_path not in sys.path:
+            sys.path.insert(0, fallback_path)
+        import_path = fallback_path
+    else:
+        raise ImportError(f"Hunyuan3D_2_1 folder not found. Searched:\n- {hunyuan_path}\n- {fallback_path}")
+    
+    # Import all required modules from the correct Hunyuan3D_2_1 structure
     from hy3dshape.schedulers import FlowMatchEulerDiscreteScheduler
-    from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+    from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline  
     from hy3dshape.models.autoencoders import ShapeVAE
     from hy3dshape.models.denoisers.hunyuandit import HunYuanDiTPlain
     from hy3dshape.models.conditioner import SingleImageEncoder
     from hy3dshape.preprocessors import ImageProcessorV2
     from hy3dshape.utils.mesh_utils import point_cloud_to_mesh, save_obj, save_ply
     
+    print(f"✅ Successfully imported Hunyuan3D modules from: {import_path}")
+    
 except ImportError as e:
-    # Check if the folder exists and provide helpful error message
-    hunyuan_folder = os.path.join(os.getcwd(), 'Hunyuan3D_2_1')
-    hy3dshape_folder = os.path.join(hunyuan_folder, 'hy3dshape')
+    # Provide detailed error diagnosis
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    hunyuan_folder = os.path.join(project_root, 'Hunyuan3D_2_1')
+    fallback_folder = os.path.join(os.getcwd(), 'Hunyuan3D_2_1')
     
-    error_msg = f"Failed to import Hunyuan3D modules: {e}\n\n"
+    error_msg = f"❌ Failed to import Hunyuan3D modules: {e}\n\n"
+    error_msg += "📁 Folder Structure Check:\n"
     
-    if not os.path.exists(hunyuan_folder):
-        error_msg += f"❌ Hunyuan3D_2_1 folder not found at: {hunyuan_folder}\n"
-        error_msg += "Please ensure you have copied the Hunyuan3D-2 repository to your project root as 'Hunyuan3D_2_1'"
-    elif not os.path.exists(hy3dshape_folder):
-        error_msg += f"❌ hy3dshape folder not found at: {hy3dshape_folder}\n"
-        error_msg += "Please ensure the Hunyuan3D_2_1 folder contains the complete hy3dshape module"
+    # Check main folders
+    if os.path.exists(hunyuan_folder):
+        error_msg += f"✅ Found: {hunyuan_folder}\n"
+        hy3dshape_path = os.path.join(hunyuan_folder, 'hy3dshape')
+        if os.path.exists(hy3dshape_path):
+            error_msg += f"✅ Found: {hy3dshape_path}\n"
+            
+            # Check specific module files
+            modules_to_check = [
+                'schedulers.py',
+                'pipelines.py', 
+                'models/autoencoders.py',
+                'models/denoisers/hunyuandit.py',
+                'models/conditioner.py',
+                'preprocessors.py',
+                'utils/mesh_utils.py'
+            ]
+            
+            for module in modules_to_check:
+                module_path = os.path.join(hy3dshape_path, module)
+                if os.path.exists(module_path):
+                    error_msg += f"✅ Found: hy3dshape/{module}\n"
+                else:
+                    error_msg += f"❌ Missing: hy3dshape/{module}\n"
+        else:
+            error_msg += f"❌ Missing: {hy3dshape_path}\n"
     else:
-        error_msg += f"❌ Module import failed. Check if all required Python dependencies are installed.\n"
-        error_msg += f"Hunyuan3D_2_1 folder exists at: {hunyuan_folder}\n"
-        error_msg += f"hy3dshape folder exists at: {hy3dshape_folder}"
+        error_msg += f"❌ Missing: {hunyuan_folder}\n"
+        
+    if os.path.exists(fallback_folder):
+        error_msg += f"✅ Fallback found: {fallback_folder}\n"
+    else:
+        error_msg += f"❌ Fallback missing: {fallback_folder}\n"
+    
+    error_msg += "\n💡 Solutions:\n"
+    error_msg += "1. Ensure Hunyuan3D_2_1 folder is in your project root\n"
+    error_msg += "2. Check that all required module files exist\n" 
+    error_msg += "3. Verify Python dependencies are installed\n"
+    error_msg += f"4. Current working directory: {os.getcwd()}\n"
     
     raise ImportError(error_msg)
 
