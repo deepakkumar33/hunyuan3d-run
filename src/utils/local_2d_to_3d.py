@@ -1,7 +1,6 @@
 """
 Local2DTo3DConverter for Hunyuan3D-2.x
-Automatically finds model folder and loads pipeline.
-Compatible with current Hunyuan3D repo (no conditioner module).
+No conditioner, no scheduler. Uses only ImageProcessorV2.
 """
 
 import os
@@ -12,7 +11,6 @@ import logging
 try:
     from Hunyuan3D_2_1.hy3dshape.pipelines import Hunyuan3DDiTPipeline
     from Hunyuan3D_2_1.hy3dshape.preprocessors import ImageProcessorV2
-    from Hunyuan3D_2_1.hy3dshape.schedulers import DITSchedulerV2
 except ImportError as e:
     raise ImportError(f"Failed to import Hunyuan3D modules: {e}")
 
@@ -46,15 +44,13 @@ class Local2DTo3DConverter:
         config_yaml = os.path.join(model_folder, "config.yaml")
 
         try:
-            # Only pass scheduler and image_processor (no conditioner)
-            scheduler = DITSchedulerV2()
             image_processor = ImageProcessorV2()
 
+            # Only checkpoint + config + image_processor, no scheduler or conditioner
             self.pipeline = Hunyuan3DDiTPipeline(
                 model_ckpt=model_ckpt,
                 config_yaml=config_yaml,
                 device="cuda",
-                scheduler=scheduler,
                 image_processor=image_processor
             )
             self.logger.info("✅ Hunyuan3D pipeline loaded successfully")
