@@ -422,9 +422,68 @@ class Local2DTo3DConverter:
                     memory_before = torch.cuda.memory_allocated(0) / (1024**3)
                     self.logger.info(f"GPU memory before inference: {memory_before:.2f}GB")
                 
+                # Convert torch tensor back to PIL images if needed
+                pipeline_input = image_batch
+                if isinstance(image_batch, torch.Tensor):
+                    try:
+                        from torchvision.transforms import ToPILImage
+                        to_pil = ToPILImage()
+                        
+                        # Convert tensor to PIL images
+                        pil_images = []
+                        
+                        # Handle batch dimension
+                        if image_batch.dim() == 4:  # [B, C, H, W]
+                            batch_size = image_batch.shape[0]
+                            for i in range(batch_size):
+                                # Extract single image tensor [C, H, W]
+                                single_image = image_batch[i]
+                                
+                                # Ensure values are in [0, 1] range for ToPILImage
+                                if single_image.max() > 1.0:
+                                    single_image = single_image / 255.0
+                                
+                                # Convert to CPU and correct dtype
+                                single_image = single_image.cpu().float()
+                                
+                                # Convert to PIL Image
+                                pil_image = to_pil(single_image)
+                                pil_images.append(pil_image)
+                                
+                        elif image_batch.dim() == 3:  # [C, H, W] - single image
+                            single_image = image_batch
+                            
+                            # Ensure values are in [0, 1] range
+                            if single_image.max() > 1.0:
+                                single_image = single_image / 255.0
+                            
+                            # Convert to CPU and correct dtype
+                            single_image = single_image.cpu().float()
+                            
+                            # Convert to PIL Image
+                            pil_image = to_pil(single_image)
+                            pil_images.append(pil_image)
+                        else:
+                            raise ValueError(f"Unexpected tensor dimensions: {image_batch.shape}")
+                        
+                        # Use PIL images as pipeline input
+                        if len(pil_images) == 1:
+                            pipeline_input = pil_images[0]
+                        else:
+                            pipeline_input = pil_images
+                            
+                        self.logger.info(f"✅ Converted {len(pil_images)} tensor(s) to PIL image(s)")
+                        
+                    except ImportError:
+                        self.logger.warning("torchvision not available, trying direct tensor input")
+                        pipeline_input = image_batch
+                    except Exception as e:
+                        self.logger.warning(f"Failed to convert tensor to PIL: {e}, trying direct tensor input")
+                        pipeline_input = image_batch
+                
                 # Run the pipeline to generate 3D representation
                 result = self.pipeline(
-                    image_batch,
+                    pipeline_input,
                     num_inference_steps=50,  # Adjust based on quality/speed requirements
                     guidance_scale=7.5,      # Adjust for better results
                     return_dict=True
