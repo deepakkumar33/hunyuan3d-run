@@ -1,6 +1,7 @@
 """
-Robust Local2DTo3DConverter that automatically finds the Hunyuan3D model folder,
-handles pipeline loading, and converts 2D images to 3D models.
+Local2DTo3DConverter for Hunyuan3D-2.x
+Automatically finds model folder and loads pipeline.
+Compatible with current Hunyuan3D repo (no conditioner module).
 """
 
 import os
@@ -8,11 +9,9 @@ import glob
 import uuid
 import logging
 
-# Import Hunyuan3D classes
 try:
     from Hunyuan3D_2_1.hy3dshape.pipelines import Hunyuan3DDiTPipeline
     from Hunyuan3D_2_1.hy3dshape.preprocessors import ImageProcessorV2
-    from Hunyuan3D_2_1.hy3dshape.conditioners import ConditionerV2
     from Hunyuan3D_2_1.hy3dshape.schedulers import DITSchedulerV2
 except ImportError as e:
     raise ImportError(f"Failed to import Hunyuan3D modules: {e}")
@@ -29,7 +28,6 @@ class Local2DTo3DConverter:
         self.logger.info("🔍 Searching for Hunyuan3D model folder...")
 
         base_model_dir = "Hunyuan3D_2_1/models/hunyuan3d-2/"
-        # Find the first folder containing both model.ckpt and config.yaml
         candidates = [
             d for d in glob.glob(os.path.join(base_model_dir, "*"))
             if os.path.isdir(d) and
@@ -48,9 +46,8 @@ class Local2DTo3DConverter:
         config_yaml = os.path.join(model_folder, "config.yaml")
 
         try:
-            # Instantiate the pipeline with proper arguments
+            # Only pass scheduler and image_processor (no conditioner)
             scheduler = DITSchedulerV2()
-            conditioner = ConditionerV2()
             image_processor = ImageProcessorV2()
 
             self.pipeline = Hunyuan3DDiTPipeline(
@@ -58,7 +55,6 @@ class Local2DTo3DConverter:
                 config_yaml=config_yaml,
                 device="cuda",
                 scheduler=scheduler,
-                conditioner=conditioner,
                 image_processor=image_processor
             )
             self.logger.info("✅ Hunyuan3D pipeline loaded successfully")
@@ -68,14 +64,9 @@ class Local2DTo3DConverter:
             raise RuntimeError("Pipeline loading failed") from e
 
     def convert(self, image_paths, output_dir):
-        """
-        Convert a list of image paths into a single 3D model file.
-        Returns the full path to the generated model.
-        """
         if self.pipeline is None:
             raise RuntimeError("Pipeline is not loaded")
 
-        # Generate a unique filename
         model_filename = f"{uuid.uuid4()}.obj"
         model_path = os.path.join(output_dir, model_filename)
 
