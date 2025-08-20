@@ -1,6 +1,7 @@
 """
 API class for 2D->3D conversion endpoints.
 """
+
 import os
 import tempfile
 import uuid
@@ -29,7 +30,7 @@ class ConvertAPI:
 
             self.logger.info(f"Received {len(images)} image(s) for conversion")
 
-            # Save images to a temporary directory
+            # Save images to a temporary dir
             tmp_dir = tempfile.mkdtemp(prefix="upload_")
             image_paths = []
             for img in images:
@@ -42,24 +43,23 @@ class ConvertAPI:
                 output_dir = os.path.join(self.output_root, job_id)
                 os.makedirs(output_dir, exist_ok=True)
 
-                # Convert 2D images to 3D model
+                # Initialize converter
                 converter = Local2DTo3DConverter(self.logger, output_dir)
-                model_path = converter.convert(image_paths, output_dir)
+                # Use correct method from local_2d_to_3d.py
+                model_path = converter.convert_images_to_3d(image_paths)
 
+                # URL for frontend
                 model_url = f"/api/output/{job_id}/{os.path.basename(model_path)}"
-                self.logger.info(f"3D model generated at {model_path}")
                 return jsonify({"message": "3D model generated", "model_url": model_url})
 
             except Exception as e:
                 self.logger.error(f"Conversion failed: {e}", exc_info=True)
                 return jsonify({"error": str(e)}), 500
 
-        @self.blueprint.route("/output/<path:filename>")
-        def serve_model(filename):
-            # Make absolute path
-            filepath = os.path.abspath(os.path.join(self.output_root, filename))
+        @self.blueprint.route("/output/<job_id>/<path:filename>")
+        def serve_model(job_id, filename):
+            filepath = os.path.join(self.output_root, job_id, filename)
             if not os.path.exists(filepath):
                 self.logger.warning(f"Requested model not found: {filepath}")
                 return jsonify({"error": "File not found"}), 404
-
             return send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
