@@ -29,6 +29,7 @@ config_api = ConfigAPI(cfg)
 app.register_blueprint(convert_api.blueprint, url_prefix='/api')
 app.register_blueprint(config_api.api, url_prefix='/api')
 
+
 @app.route('/upload_jewelry', methods=['POST'])
 def upload_jewelry():
     if 'images' not in request.files:
@@ -62,6 +63,17 @@ def upload_jewelry():
     except Exception as e:
         logger.error(f"3D conversion failed: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+# NEW ROUTE: Serve the generated 3D models
+@app.route('/output/<job_id>/<filename>')
+def serve_output_model(job_id, filename):
+    output_dir = os.path.join(output_root, job_id)
+    file_path = os.path.join(output_dir, filename)
+    if not os.path.exists(file_path):
+        return jsonify({"error": "File not found"}), 404
+    return send_from_directory(output_dir, filename)
+
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
