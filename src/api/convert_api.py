@@ -4,6 +4,7 @@ API class for 2D->3D conversion endpoints.
 - Constructor: ConvertAPI(logger, output_dir)
 - Exposes: .blueprint (Flask Blueprint) so main.py can register it as convert_api.blueprint
 """
+
 import os
 import tempfile
 import uuid
@@ -46,12 +47,13 @@ class ConvertAPI:
                 output_dir = os.path.join(self.output_root, job_id)
                 os.makedirs(output_dir, exist_ok=True)
 
-                # Pass output_dir string to converter
+                # Use the fixed Local2DTo3DConverter
                 converter = Local2DTo3DConverter(self.logger, output_dir)
-                model_path = converter.convert(image_paths, output_dir)
+                model_path = converter.convert_images_to_3d(image_paths)
 
                 # URL for frontend (without /api prefix)
-                model_url = f"/output/{job_id}/{os.path.basename(model_path)}"
+                model_url = f"/api/output/{job_id}/{os.path.basename(model_path)}"
+                self.logger.info(f"3D model generated at {model_path}")
                 return jsonify({"message": "3D model generated", "model_url": model_url})
 
             except Exception as e:
