@@ -1,10 +1,6 @@
 """
 API class for 2D->3D conversion endpoints.
-
-- Constructor: ConvertAPI(logger, output_dir)
-- Exposes: .blueprint (Flask Blueprint) so main.py can register it as convert_api.blueprint
 """
-
 import os
 import tempfile
 import uuid
@@ -16,7 +12,6 @@ class ConvertAPI:
     def __init__(self, logger, output_root):
         self.logger = logger
         self.output_root = output_root  # path where all outputs are stored
-        # blueprint name 'api' keeps routes under the same prefix
         self.blueprint = Blueprint("api", __name__)
         self.add_routes()
 
@@ -34,7 +29,7 @@ class ConvertAPI:
 
             self.logger.info(f"Received {len(images)} image(s) for conversion")
 
-            # Save images to a temporary dir
+            # Save images to a temporary directory
             tmp_dir = tempfile.mkdtemp(prefix="upload_")
             image_paths = []
             for img in images:
@@ -47,11 +42,10 @@ class ConvertAPI:
                 output_dir = os.path.join(self.output_root, job_id)
                 os.makedirs(output_dir, exist_ok=True)
 
-                # Use the fixed Local2DTo3DConverter
+                # Convert 2D images to 3D model
                 converter = Local2DTo3DConverter(self.logger, output_dir)
-                model_path = converter.convert_images_to_3d(image_paths)
+                model_path = converter.convert(image_paths, output_dir)
 
-                # URL for frontend (without /api prefix)
                 model_url = f"/api/output/{job_id}/{os.path.basename(model_path)}"
                 self.logger.info(f"3D model generated at {model_path}")
                 return jsonify({"message": "3D model generated", "model_url": model_url})
@@ -62,8 +56,10 @@ class ConvertAPI:
 
         @self.blueprint.route("/output/<path:filename>")
         def serve_model(filename):
-            filepath = os.path.join(self.output_root, filename)
+            # Make absolute path
+            filepath = os.path.abspath(os.path.join(self.output_root, filename))
             if not os.path.exists(filepath):
                 self.logger.warning(f"Requested model not found: {filepath}")
                 return jsonify({"error": "File not found"}), 404
+
             return send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
