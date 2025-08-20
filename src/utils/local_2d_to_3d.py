@@ -1,83 +1,82 @@
 """
-Robust Local2DTo3DConverter for Hunyuan3D v2.1 with ImageProcessorV2.
-
-- Accepts common image formats (jpg, png).
-- Saves 3D model to output folder.
-- Returns full path to generated .obj file.
+Robust Local2DTo3DConverter for Hunyuan3D 2.1
+- Properly initializes pipeline with scheduler, conditioner, and image_processor
+- Handles uploaded images and outputs 3D model files
 """
 
 import os
-import uuid
+import glob
 import logging
-import traceback
-
 import torch
+
 from Hunyuan3D_2_1.hy3dshape.pipelines import Hunyuan3DDiTPipeline
+from Hunyuan3D_2_1.hy3dshape.schedulers import Scheduler
+from Hunyuan3D_2_1.hy3dshape.conditioners import Conditioner
 from Hunyuan3D_2_1.hy3dshape.preprocessors import ImageProcessorV2
 
+
 class Local2DTo3DConverter:
-    def __init__(self, logger, config):
-        """
-        logger: your logger instance
-        config: dict or object with config parameters (not used in this minimal version)
-        """
+    def __init__(self, logger: logging.Logger, output_dir: str):
         self.logger = logger
-        self.config = config
-        self.image_processor = ImageProcessorV2(size=512)
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.pipeline = None
         self._load_pipeline()
 
     def _load_pipeline(self):
         try:
-            # Adjust model path according to your local setup
             model_ckpt = os.path.join(
-                "Hunyuan3D_2_1", "models", "hunyuan3d-2", "hunyuan3d-dit-v2-0", "model.fp16.ckpt"
+                "Hunyuan3D_2_1/models/hunyuan3d-2/hunyuan3d-dit-v2-0",
+                "model.fp16.ckpt"
             )
             config_yaml = os.path.join(
-                "Hunyuan3D_2_1", "models", "hunyuan3d-2", "hunyuan3d-dit-v2-0", "config.yaml"
+                "Hunyuan3D_2_1/models/hunyuan3d-2/hunyuan3d-dit-v2-0",
+                "config.yaml"
             )
+
             self.logger.info(f"✅ Loading Hunyuan3D pipeline from checkpoint: {model_ckpt}")
-            self.pipeline = Hunyuan3DDiTPipeline(model_ckpt, config_yaml, device="cuda")
-            self.logger.info("✅ Pipeline loaded successfully")
+
+            # Initialize scheduler, conditioner, and image processor
+            scheduler = Scheduler(config_yaml)
+            conditioner = Conditioner(config_yaml)
+            image_processor = ImageProcessorV2(size=512)
+
+            self.pipeline = Hunyuan3DDiTPipeline(
+                model_ckpt,
+                config_yaml,
+                scheduler=scheduler,
+                conditioner=conditioner,
+                image_processor=image_processor,
+                device=self.device
+            )
+
+            self.logger.info("Pipeline loaded successfully!")
+
         except Exception as e:
-            self.logger.error(f"Failed to load pipeline: {e}")
-            traceback.print_exc()
-            raise RuntimeError("Pipeline loading failed")
+            self.logger.error(f"Failed to load pipeline: {e}", exc_info=True)
+            raise RuntimeError("Pipeline loading failed") from e
 
-    def convert(self, image_paths, output_dir):
+    def convert(self, image_paths, output_dir=None):
         """
-        image_paths: list of file paths
-        output_dir: directory where .obj will be saved
+        Convert list of 2D images to a 3D model
         """
-        if not self.pipeline:
-            raise RuntimeError("Pipeline not loaded")
+        if output_dir is None:
+            output_dir = self.output_dir
 
-        os.makedirs(output_dir, exist_ok=True)
-
-        processed_images = []
-        for img_path in image_paths:
-            if not os.path.exists(img_path):
-                self.logger.warning(f"Image not found: {img_path}, skipping")
-                continue
-            try:
-                # Use ImageProcessorV2 to load and preprocess
-                img, _ = self.image_processor.load_image(img_path, to_tensor=True)
-                processed_images.append(img)
-            except Exception as e:
-                self.logger.error(f"Failed to process {img_path}: {e}")
-
-        if not processed_images:
-            raise RuntimeError("No valid images to process")
-
-        self.logger.info(f"Starting 2D->3D conversion for {len(processed_images)} images")
         try:
-            # The pipeline expects list of images
-            result = self.pipeline(processed_images)
-            output_obj = os.path.join(output_dir, f"model_{uuid.uuid4().hex}.obj")
-            result.save(output_obj)  # pipeline should have .save() method for obj
-            self.logger.info(f"3D model saved at {output_obj}")
-            return output_obj
+            self.logger.info(f"Converting {len(image_paths)} image(s) to 3D model...")
+
+            # Run the pipeline on all images
+            model_file = os.path.join(output_dir, "output_model.obj")
+            self.pipeline.run(image_paths, save_path=model_file)
+
+            if not os.path.exists(model_file):
+                raise FileNotFoundError(f"Pipeline did not generate model: {model_file}")
+
+            self.logger.info(f"3D model successfully generated: {model_file}")
+            return model_file
+
         except Exception as e:
-            self.logger.error(f"3D conversion failed: {e}")
-            traceback.print_exc()
-            raise RuntimeError("Conversion failed")
+            self.logger.error(f"Conversion failed: {e}", exc_info=True)
+            raise
