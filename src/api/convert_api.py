@@ -50,7 +50,7 @@ class ConvertAPI:
 
                 # Use updated converter method
                 converter = Local2DTo3DConverter(self.logger, output_dir)
-                model_path = converter.convert_images_to_3d(image_paths)
+                model_path = converter.convert(image_paths, output_dir)  # updated line
 
                 # URL for frontend (without /api prefix)
                 model_url = f"/output/{job_id}/{os.path.basename(model_path)}"
@@ -69,7 +69,7 @@ class ConvertAPI:
                 return jsonify({"error": "File not found"}), 404
             return send_file(
                 filepath,
-                as_attachment=True,
+                as_attachment=False,
                 download_name=os.path.basename(filepath),
                 conditional=True  # allows HEAD requests
             )
