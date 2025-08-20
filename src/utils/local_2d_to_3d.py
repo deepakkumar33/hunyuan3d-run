@@ -12,16 +12,42 @@ import numpy as np
 from typing import List, Optional
 
 try:
-    # Import Hunyuan3D modules
-    from hy3dgen.hy3dshape.schedulers import FlowMatchEulerDiscreteScheduler
-    from hy3dgen.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
-    from hy3dgen.hy3dshape.models.autoencoders import ShapeVAE
-    from hy3dgen.hy3dshape.models.denoisers.hunyuandit import HunYuanDiTPlain
-    from hy3dgen.hy3dshape.models.conditioner import SingleImageEncoder
-    from hy3dgen.hy3dshape.preprocessors import ImageProcessorV2
-    from hy3dgen.hy3dshape.utils.mesh_utils import point_cloud_to_mesh, save_obj, save_ply
+    # Import Hunyuan3D modules from the correct folder structure
+    import sys
+    import os
+    
+    # Add Hunyuan3D_2_1 to Python path if not already there
+    hunyuan_path = os.path.join(os.getcwd(), 'Hunyuan3D_2_1')
+    if os.path.exists(hunyuan_path) and hunyuan_path not in sys.path:
+        sys.path.insert(0, hunyuan_path)
+    
+    from hy3dshape.schedulers import FlowMatchEulerDiscreteScheduler
+    from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+    from hy3dshape.models.autoencoders import ShapeVAE
+    from hy3dshape.models.denoisers.hunyuandit import HunYuanDiTPlain
+    from hy3dshape.models.conditioner import SingleImageEncoder
+    from hy3dshape.preprocessors import ImageProcessorV2
+    from hy3dshape.utils.mesh_utils import point_cloud_to_mesh, save_obj, save_ply
+    
 except ImportError as e:
-    raise ImportError(f"Failed to import Hunyuan3D modules. Make sure hy3dgen folder is in your project root: {e}")
+    # Check if the folder exists and provide helpful error message
+    hunyuan_folder = os.path.join(os.getcwd(), 'Hunyuan3D_2_1')
+    hy3dshape_folder = os.path.join(hunyuan_folder, 'hy3dshape')
+    
+    error_msg = f"Failed to import Hunyuan3D modules: {e}\n\n"
+    
+    if not os.path.exists(hunyuan_folder):
+        error_msg += f"❌ Hunyuan3D_2_1 folder not found at: {hunyuan_folder}\n"
+        error_msg += "Please ensure you have copied the Hunyuan3D-2 repository to your project root as 'Hunyuan3D_2_1'"
+    elif not os.path.exists(hy3dshape_folder):
+        error_msg += f"❌ hy3dshape folder not found at: {hy3dshape_folder}\n"
+        error_msg += "Please ensure the Hunyuan3D_2_1 folder contains the complete hy3dshape module"
+    else:
+        error_msg += f"❌ Module import failed. Check if all required Python dependencies are installed.\n"
+        error_msg += f"Hunyuan3D_2_1 folder exists at: {hunyuan_folder}\n"
+        error_msg += f"hy3dshape folder exists at: {hy3dshape_folder}"
+    
+    raise ImportError(error_msg)
 
 class Local2DTo3DConverter:
     def __init__(self, logger: logging.Logger, output_dir: str):
