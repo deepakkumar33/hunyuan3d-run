@@ -11,6 +11,9 @@ from PIL import Image
 import numpy as np
 from typing import List, Optional
 
+# Set CUDA memory allocation configuration before any CUDA operations
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 try:
     # Import Hunyuan3D modules from the correct folder structure
     import sys
@@ -101,7 +104,9 @@ class Local2DTo3DConverter:
         self.logger = logger
         self.output_dir = output_dir
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.use_half_precision = torch.cuda.is_available()  # Use half precision on GPU
         self.logger.info(f"Using device: {self.device}")
+        self.logger.info(f"Half precision enabled: {self.use_half_precision}")
         
         # Find and validate model folder
         self.model_folder = self._find_model_folder()
@@ -182,6 +187,14 @@ class Local2DTo3DConverter:
         try:
             self.logger.info("🔄 Loading Hunyuan3D pipeline components...")
             
+            # Check available GPU memory
+            if torch.cuda.is_available():
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                self.logger.info(f"GPU memory available: {gpu_memory:.1f}GB")
+                
+                # Clear cache before loading
+                torch.cuda.empty_cache()
+            
             # Load model weights
             weights_path = self._find_model_weights()
             
@@ -198,31 +211,56 @@ class Local2DTo3DConverter:
             self.scheduler = FlowMatchEulerDiscreteScheduler(**scheduler_config)
             self.logger.info("✅ FlowMatchEulerDiscreteScheduler initialized")
             
-            # Initialize VAE
+            # Initialize VAE with half precision if enabled
             vae_config = self.config.get('vae', {}).get('params', {})
             self.vae = ShapeVAE(**vae_config).to(self.device)
+            if self.use_half_precision:
+                self.vae = self.vae.half()
+                self.logger.info("✅ VAE converted to half precision")
             
             # Load VAE weights if available
             if 'vae' in checkpoint:
-                self.vae.load_state_dict(checkpoint['vae'])
+                vae_state_dict = checkpoint['vae']
+                if self.use_half_precision:
+                    # Convert checkpoint weights to half precision if needed
+                    vae_state_dict = {k: v.half() if v.dtype == torch.float32 else v 
+                                     for k, v in vae_state_dict.items()}
+                self.vae.load_state_dict(vae_state_dict)
                 self.logger.info("✅ VAE weights loaded")
             
-            # Initialize image conditioner
+            # Initialize image conditioner with half precision if enabled
             conditioner_config = self.config.get('conditioner', {}).get('params', {})
             self.conditioner = SingleImageEncoder(**conditioner_config).to(self.device)
+            if self.use_half_precision:
+                self.conditioner = self.conditioner.half()
+                self.logger.info("✅ Conditioner converted to half precision")
             
             # Load conditioner weights if available
             if 'conditioner' in checkpoint:
-                self.conditioner.load_state_dict(checkpoint['conditioner'])
+                conditioner_state_dict = checkpoint['conditioner']
+                if self.use_half_precision:
+                    # Convert checkpoint weights to half precision if needed
+                    conditioner_state_dict = {k: v.half() if v.dtype == torch.float32 else v 
+                                            for k, v in conditioner_state_dict.items()}
+                self.conditioner.load_state_dict(conditioner_state_dict)
                 self.logger.info("✅ Conditioner weights loaded")
             
-            # Initialize the main denoising model
+            # Initialize the main denoising model with half precision
             model_config = self.config.get('model', {}).get('params', {})
-            self.model = HunYuanDiTPlain(**model_config).to(self.device)
+            self.model = HunYuanDiTPlain(**model_config)
+            if self.use_half_precision:
+                self.model = self.model.half()
+                self.logger.info("✅ Main model converted to half precision")
+            self.model = self.model.to(self.device)
             
             # Load main model weights
             if 'model' in checkpoint:
-                self.model.load_state_dict(checkpoint['model'])
+                model_state_dict = checkpoint['model']
+                if self.use_half_precision:
+                    # Convert checkpoint weights to half precision if needed
+                    model_state_dict = {k: v.half() if v.dtype == torch.float32 else v 
+                                      for k, v in model_state_dict.items()}
+                self.model.load_state_dict(model_state_dict)
                 self.logger.info("✅ Main model weights loaded")
             
             # Initialize image processor
@@ -248,6 +286,12 @@ class Local2DTo3DConverter:
             self.vae.eval()
             self.conditioner.eval()
             
+            # Clear cache after loading
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                memory_allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                self.logger.info(f"GPU memory allocated after loading: {memory_allocated:.2f}GB")
+            
         except Exception as e:
             self.logger.error(f"Pipeline loading failed: {traceback.format_exc()}")
             raise RuntimeError(f"Pipeline loading failed: {e}")
@@ -271,15 +315,28 @@ class Local2DTo3DConverter:
         
         # Stack images into batch
         if len(processed_images) == 1:
-            return processed_images[0].unsqueeze(0).to(self.device)
+            image_batch = processed_images[0].unsqueeze(0).to(self.device)
         else:
-            return torch.stack(processed_images).to(self.device)
+            image_batch = torch.stack(processed_images).to(self.device)
+        
+        # Convert to half precision if model uses half precision
+        if self.use_half_precision and image_batch.dtype == torch.float32:
+            image_batch = image_batch.half()
+            self.logger.debug("✅ Converted input images to half precision")
+        
+        return image_batch
     
     def _generate_3d_mesh(self, image_batch: torch.Tensor) -> np.ndarray:
         """Generate 3D mesh from preprocessed images"""
         try:
             with torch.no_grad():
                 self.logger.info("🔄 Running Hunyuan3D inference...")
+                
+                # Clear cache before inference
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    memory_before = torch.cuda.memory_allocated(0) / (1024**3)
+                    self.logger.info(f"GPU memory before inference: {memory_before:.2f}GB")
                 
                 # Run the pipeline to generate 3D representation
                 result = self.pipeline(
@@ -288,6 +345,12 @@ class Local2DTo3DConverter:
                     guidance_scale=7.5,      # Adjust for better results
                     return_dict=True
                 )
+                
+                # Clear cache after inference
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    memory_after = torch.cuda.memory_allocated(0) / (1024**3)
+                    self.logger.info(f"GPU memory after inference: {memory_after:.2f}GB")
                 
                 # Extract point cloud or mesh data
                 if hasattr(result, 'point_clouds'):
@@ -404,8 +467,12 @@ class Local2DTo3DConverter:
             # Check GPU memory
             if torch.cuda.is_available():
                 gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                gpu_free = torch.cuda.memory_reserved(0) / (1024**3)
-                self.logger.info(f"GPU Memory: {gpu_memory:.1f}GB total, {gpu_free:.1f}GB free")
+                gpu_allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                gpu_cached = torch.cuda.memory_reserved(0) / (1024**3)
+                self.logger.info(f"GPU Memory: {gpu_memory:.1f}GB total, {gpu_allocated:.1f}GB allocated, {gpu_cached:.1f}GB cached")
+                
+                # Clear cache before conversion
+                torch.cuda.empty_cache()
             
             # Preprocess images
             self.logger.info("🔄 Preprocessing images...")
@@ -427,10 +494,19 @@ class Local2DTo3DConverter:
             self.logger.info(f"✅ 3D conversion completed successfully: {primary_output}")
             self.logger.info(f"📁 Available formats: {list(output_files.keys())}")
             
+            # Final cleanup
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                final_memory = torch.cuda.memory_allocated(0) / (1024**3)
+                self.logger.info(f"GPU memory after conversion: {final_memory:.2f}GB")
+            
             return primary_output
             
         except Exception as e:
             self.logger.error(f"Conversion failed: {traceback.format_exc()}")
+            # Clean up on error
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             raise RuntimeError(f"3D conversion failed: {e}")
     
     def get_available_formats(self, job_output_dir: str) -> dict:
@@ -451,4 +527,6 @@ class Local2DTo3DConverter:
         """Clean up GPU memory"""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            self.logger.info("🧹 GPU memory cleaned up")
+            torch.cuda.synchronize()
+            memory_allocated = torch.cuda.memory_allocated(0) / (1024**3)
+            self.logger.info(f"🧹 GPU memory cleaned up, current allocation: {memory_allocated:.2f}GB")
