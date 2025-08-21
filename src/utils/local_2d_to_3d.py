@@ -496,20 +496,118 @@ class Local2DTo3DConverter:
                     self.logger.info(f"GPU memory after inference: {memory_after:.2f}GB")
                 
                 # Extract point cloud or mesh data
-                if hasattr(result, 'point_clouds'):
-                    point_cloud = result.point_clouds[0].cpu().numpy()
-                elif hasattr(result, 'meshes'):
-                    mesh = result.meshes[0]
+                if hasattr(result, 'point_clouds') and result.point_clouds is not None:
+                    self.logger.info("✅ Using point_clouds from pipeline result")
+                    point_clouds = result.point_clouds
+                    
+                    # Handle different point cloud formats
+                    if isinstance(point_clouds, list):
+                        if len(point_clouds) > 0:
+                            point_cloud = point_clouds[0]
+                        else:
+                            raise RuntimeError("Empty point_clouds list returned from pipeline")
+                    else:
+                        point_cloud = point_clouds
+                    
+                    # Convert to numpy if it's a tensor
+                    if hasattr(point_cloud, 'cpu'):
+                        point_cloud = point_cloud.cpu().numpy()
+                    elif not isinstance(point_cloud, np.ndarray):
+                        raise RuntimeError(f"Unexpected point_cloud type: {type(point_cloud)}")
+                        
+                elif hasattr(result, 'meshes') and result.meshes is not None:
+                    self.logger.info("✅ Using meshes from pipeline result")
+                    meshes = result.meshes
+                    
+                    # Handle different mesh formats
+                    if isinstance(meshes, list):
+                        if len(meshes) > 0:
+                            mesh = meshes[0]
+                        else:
+                            raise RuntimeError("Empty meshes list returned from pipeline")
+                    else:
+                        mesh = meshes
+                    
+                    # If it's already a mesh object, return it directly
                     return mesh
+                    
                 else:
-                    # Fallback: extract from latents
+                    # Fallback: extract from latents using VAE
+                    self.logger.info("✅ Fallback: decoding latents using VAE")
                     latents = result.latents if hasattr(result, 'latents') else result
+                    
                     # Decode latents to point cloud using VAE
                     with torch.no_grad():
                         decoded = self.vae.decode(latents)
-                        point_cloud = decoded.cpu().numpy()
+                        self.logger.info(f"VAE decode result type: {type(decoded)}")
+                        
+                        # Handle different decoded formats
+                        if isinstance(decoded, list):
+                            self.logger.info(f"Decoded is a list with {len(decoded)} items")
+                            
+                            # Try to find the best item in the list
+                            point_cloud = None
+                            for i, item in enumerate(decoded):
+                                self.logger.info(f"List item {i}: type={type(item)}")
+                                
+                                if hasattr(item, 'cpu'):
+                                    # It's a tensor
+                                    point_cloud = item.cpu().numpy()
+                                    self.logger.info(f"✅ Using tensor from list item {i}")
+                                    break
+                                elif isinstance(item, np.ndarray):
+                                    # It's already a numpy array
+                                    point_cloud = item
+                                    self.logger.info(f"✅ Using numpy array from list item {i}")
+                                    break
+                                elif hasattr(item, 'vertices'):
+                                    # It's a mesh object (like trimesh.Trimesh)
+                                    try:
+                                        point_cloud = np.array(item.vertices)
+                                        self.logger.info(f"✅ Using vertices from mesh object in list item {i}")
+                                        break
+                                    except Exception as e:
+                                        self.logger.warning(f"Failed to extract vertices from mesh: {e}")
+                                        continue
+                                elif hasattr(item, 'points'):
+                                    # It's a point cloud object
+                                    try:
+                                        point_cloud = np.array(item.points)
+                                        self.logger.info(f"✅ Using points from point cloud object in list item {i}")
+                                        break
+                                    except Exception as e:
+                                        self.logger.warning(f"Failed to extract points: {e}")
+                                        continue
+                                else:
+                                    self.logger.warning(f"Unknown item type in decoded list: {type(item)}")
+                            
+                            if point_cloud is None:
+                                raise RuntimeError(f"Could not extract point cloud from decoded list of {len(decoded)} items")
+                                
+                        elif hasattr(decoded, 'cpu'):
+                            # It's a single tensor
+                            point_cloud = decoded.cpu().numpy()
+                            self.logger.info("✅ Using single tensor from VAE decode")
+                            
+                        elif isinstance(decoded, np.ndarray):
+                            # It's already a numpy array
+                            point_cloud = decoded
+                            self.logger.info("✅ Using numpy array from VAE decode")
+                            
+                        elif hasattr(decoded, 'vertices'):
+                            # It's a mesh object
+                            point_cloud = np.array(decoded.vertices)
+                            self.logger.info("✅ Using vertices from mesh object")
+                            
+                        elif hasattr(decoded, 'points'):
+                            # It's a point cloud object
+                            point_cloud = np.array(decoded.points)
+                            self.logger.info("✅ Using points from point cloud object")
+                            
+                        else:
+                            raise RuntimeError(f"Unexpected decoded type: {type(decoded)}")
                 
-                self.logger.info("✅ 3D inference completed")
+                self.logger.info(f"✅ 3D inference completed, point cloud shape: {point_cloud.shape}")
                 return point_cloud
                 
         except Exception as e:
