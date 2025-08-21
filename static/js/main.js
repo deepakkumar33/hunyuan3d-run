@@ -270,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const res = await fetch(statusUrl, {
         method: 'GET',
-        signal: AbortSignal.timeout(10000) // 10 second timeout for status check
+        signal: AbortSignal.timeout(30000) // Increased to 30 second timeout for status check
       });
       
       if (!res.ok) {
@@ -288,6 +288,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // Don't stop polling for network errors, just log them
       if (err.name !== 'AbortError') {
         console.warn('Continuing polling despite error:', err.message);
+      } else {
+        console.warn('Status polling timed out, will retry on next interval');
       }
     }
   }
@@ -298,10 +300,20 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleStatusUpdate(status) {
     const { status: jobStatus, progress, message, model_url } = status;
     
+    // Normalize progress value (handle both 0-1 and 0-100 ranges)
+    let normalizedProgress = progress || 0;
+    if (normalizedProgress > 1) {
+      // Already in 0-100 range
+      normalizedProgress = Math.min(100, normalizedProgress);
+    } else {
+      // Convert 0-1 to 0-100 range
+      normalizedProgress = normalizedProgress * 100;
+    }
+    
     switch (jobStatus) {
       case 'pending':
         updateProgress(
-          Math.max(5, (progress || 0) * 100), 
+          Math.max(5, normalizedProgress), 
           message || 'Waiting in queue...', 
           'pending'
         );
@@ -309,13 +321,14 @@ document.addEventListener('DOMContentLoaded', () => {
         
       case 'running':
         updateProgress(
-          Math.max(10, Math.min(95, (progress || 0.1) * 100)), 
+          Math.max(10, Math.min(95, normalizedProgress)), 
           message || 'Processing with Hunyuan3D...', 
           'running'
         );
         break;
         
       case 'done':
+      case 'finished': // Handle both 'done' and 'finished' as completion states
         stopPolling();
         updateProgress(100, 'Complete!', 'done');
         
@@ -328,6 +341,7 @@ document.addEventListener('DOMContentLoaded', () => {
         break;
         
       case 'error':
+      case 'failed': // Handle both 'error' and 'failed' as error states
         stopPolling();
         const errorMsg = message || 'Conversion failed';
         showErrorMessage(`Conversion error: ${errorMsg}`);
@@ -338,8 +352,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
       default:
         console.warn('Unknown job status:', jobStatus);
+        // For unknown statuses, assume it's still running
         updateProgress(
-          (progress || 0) * 100, 
+          Math.max(10, Math.min(95, normalizedProgress)), 
           message || `Status: ${jobStatus}`, 
           'running'
         );
@@ -349,19 +364,50 @@ document.addEventListener('DOMContentLoaded', () => {
   /**
    * Handle successful conversion completion
    */
-  function handleConversionComplete(result) {
+  async function handleConversionComplete(result) {
     console.log('Conversion completed:', result);
     
-    // Get the primary model URL for the 3D viewer
-    const modelUrl = `http://${HOST}:5000${result.model_url}`;
-    console.log('Model URL:', modelUrl);
+    // Build absolute model URL
+    let modelUrl;
+    if (result.model_url.startsWith('http')) {
+      // Already absolute URL
+      modelUrl = result.model_url;
+    } else {
+      // Relative URL, make it absolute
+      modelUrl = `http://${HOST}:5000${result.model_url}`;
+    }
+    
+    console.log('Absolute model URL:', modelUrl);
+
+    try {
+      // Check if the model file is reachable before proceeding
+      console.log('Checking model accessibility:', modelUrl);
+      const checkResponse = await fetch(modelUrl, { 
+        method: 'HEAD',
+        signal: AbortSignal.timeout(15000) // 15 second timeout for model check
+      });
+      
+      if (!checkResponse.ok) {
+        throw new Error(`Model file not accessible: ${checkResponse.status} ${checkResponse.statusText}`);
+      }
+      
+      console.log('✅ Model file is accessible');
+      
+    } catch (err) {
+      console.error('Model accessibility check failed:', err);
+      showErrorMessage(`Model file not accessible: ${err.message}`);
+      showToast(`Model not accessible: ${err.message}`, 'error');
+      updateProgress(100, 'Error: Model not accessible', 'error');
+      return;
+    }
 
     // Get available export formats
     let exportFormats = {};
     if (result.formats) {
       // Convert relative URLs to full API URLs
       Object.keys(result.formats).forEach(format => {
-        exportFormats[format] = `http://${HOST}:5000${result.formats[format]}`;
+        const formatUrl = result.formats[format];
+        exportFormats[format] = formatUrl.startsWith('http') ? formatUrl : `http://${HOST}:5000${formatUrl}`;
       });
       console.log('Available formats from API:', exportFormats);
     } else {
@@ -391,8 +437,60 @@ document.addEventListener('DOMContentLoaded', () => {
     // Wait a moment, then switch to View tab and initialize viewer
     setTimeout(() => {
       tabs[2].click();
-      initializeViewer();
+      loadModelIntoViewer(modelUrl);
     }, 1000);
+  }
+
+  /**
+   * Load the model into the Three.js viewer
+   */
+  async function loadModelIntoViewer(modelUrl) {
+    console.log('Loading model into viewer:', modelUrl);
+    
+    const modelViewer = document.getElementById('model-viewer');
+    if (!modelViewer) {
+      console.error('Model viewer element not found');
+      showErrorMessage('Model viewer element not found');
+      return;
+    }
+
+    // Show loading state
+    modelViewer.innerHTML = `
+      <div class="viewer-loading">
+        <i class="fas fa-spinner fa-spin"></i>
+        <p>Loading 3D model...</p>
+        <p class="viewer-info">Initializing Three.js viewer...</p>
+      </div>
+    `;
+
+    try {
+      // Call the existing initializeViewer function if it exists
+      if (window.initializeViewer && typeof window.initializeViewer === 'function') {
+        console.log('Calling existing initializeViewer function');
+        await window.initializeViewer(modelUrl);
+        console.log('✅ Model loaded successfully via initializeViewer');
+        showToast('3D model loaded successfully!', 'success');
+        return;
+      }
+      
+      // Fallback: try ThreeJSViewer if initializeViewer is not available
+      if (window.ThreeJSViewer && typeof window.ThreeJSViewer.loadModel === 'function') {
+        console.log('Using ThreeJSViewer to load model');
+        await window.ThreeJSViewer.loadModel(modelUrl);
+        console.log('✅ Model loaded successfully via ThreeJSViewer');
+        showToast('3D model loaded successfully!', 'success');
+        return;
+      }
+      
+      // If neither method is available, show fallback
+      console.warn('No 3D viewer functions available');
+      showFallbackViewer('3D viewer functions not available');
+      
+    } catch(err) {
+      console.error('Model loading failed:', err);
+      showFallbackViewer(`Failed to load 3D model: ${err.message}`);
+      showToast(`3D viewer error: ${err.message}`, 'error');
+    }
   }
 
   /**
@@ -460,7 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   //
-  // 5) INITIALIZE 3D VIEWER
+  // 5) LEGACY VIEWER INITIALIZATION (keeping for backward compatibility)
   //
   async function initializeViewer() {
     if (!currentModelData) {
@@ -469,49 +567,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const modelViewer = document.getElementById('model-viewer');
-    if (!modelViewer) {
-      console.error('Model viewer element not found');
-      return;
-    }
-
-    // Show loading state
-    modelViewer.innerHTML = `
-      <div class="viewer-loading">
-        <i class="fas fa-spinner fa-spin"></i>
-        <p>Loading 3D model...</p>
-        <p class="viewer-info">This may take a moment</p>
-      </div>
-    `;
-
-    try {
-      console.log('Initializing 3D viewer with URL:', currentModelData.modelUrl);
-      
-      // Check if the model file exists by making a HEAD request
-      const checkResponse = await fetch(currentModelData.modelUrl, { 
-        method: 'HEAD',
-        signal: AbortSignal.timeout(10000)
-      });
-      if (!checkResponse.ok) {
-        throw new Error(`Model file not accessible: ${checkResponse.status} ${checkResponse.statusText}`);
-      }
-      
-      // Use the global ThreeJSViewer object if available
-      if (window.ThreeJSViewer && typeof window.ThreeJSViewer.loadModel === 'function') {
-        console.log('Using ThreeJSViewer to load model');
-        await window.ThreeJSViewer.loadModel(currentModelData.modelUrl);
-        console.log('3D viewer loaded successfully');
-        showToast('3D model loaded successfully!', 'success');
-      } else {
-        console.warn('ThreeJSViewer not available, showing fallback');
-        showFallbackViewer('3D viewer is not available');
-      }
-      
-    } catch(err) {
-      console.error('Viewer initialization failed:', err);
-      showFallbackViewer(`Failed to load 3D model: ${err.message}`);
-      showToast(`3D viewer error: ${err.message}`, 'error');
-    }
+    // Use the new loadModelIntoViewer function
+    await loadModelIntoViewer(currentModelData.modelUrl);
   }
 
   function showFallbackViewer(message = '3D viewer is not available') {
