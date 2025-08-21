@@ -5,9 +5,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Always hit port 5000 where Flask is listening
   const HOST = window.location.hostname;
   const CONVERT_API = `http://${HOST}:5000/api/convert`;
+  const STATUS_API_BASE = `http://${HOST}:5000/api/status`;
 
-  // Global variables for model data
+  // Global variables for model data and polling
   let currentModelData = null;
+  let currentJobId = null;
+  let pollingInterval = null;
 
   //
   // 1) NAVIGATION
@@ -99,7 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   //
-  // 3) UPLOAD & PROCESS
+  // 3) UPLOAD & PROCESS WITH POLLING
   //
   uploadBtn.addEventListener('click', async () => {
     if (!files.length) {
@@ -128,25 +131,80 @@ document.addEventListener('DOMContentLoaded', () => {
     files.forEach(f => form.append('images', f));
 
     console.log(`Starting conversion with ${files.length} image(s)`);
-    startProgress();
     
-    let modelUrl;
-    let exportFormats = {};
+    // Reset any previous job state
+    stopPolling();
+    currentJobId = null;
+    currentModelData = null;
+    clearErrorMessage();
+    
+    // Start conversion process
+    await startConversion(form);
+  });
 
+  /**
+   * Start the conversion process by submitting to /api/convert
+   */
+  async function startConversion(formData) {
+    updateProgress(0, 'Uploading images...', 'uploading');
+    
     try {
       console.log('Sending request to:', CONVERT_API);
       
       const res = await fetch(CONVERT_API, { 
         method: 'POST', 
-        body: form,
-        // Add timeout handling
-        signal: AbortSignal.timeout(300000) // 5 minute timeout
+        body: formData,
+        signal: AbortSignal.timeout(30000) // 30 second timeout for upload
       });
       
       console.log('Response status:', res.status);
       console.log('Response headers:', Object.fromEntries(res.headers.entries()));
       
-      if (!res.ok) {
+      // Handle different success responses
+      if (res.status === 202) {
+        // Expected: 202 Accepted with job info
+        const json = await res.json();
+        console.log('Conversion started:', json);
+        
+        // Extract job ID and status URL
+        currentJobId = json.job_id;
+        let statusUrl = json.status_url;
+        
+        if (!currentJobId) {
+          throw new Error('No job_id in 202 response');
+        }
+        
+        // Build status URL if not provided
+        if (!statusUrl) {
+          statusUrl = `/api/status/${currentJobId}`;
+        }
+        
+        // Start polling for status
+        startPolling(statusUrl);
+        
+      } else if (res.status === 201 || res.status === 200) {
+        // Fallback: immediate completion (legacy behavior)
+        const json = await res.json();
+        console.log('Immediate completion:', json);
+        
+        if (json.model_url) {
+          handleConversionComplete(json);
+        } else {
+          throw new Error('No model_url in immediate response');
+        }
+        
+      } else if (res.status === 302 || res.status === 303) {
+        // Redirect to status URL
+        const location = res.headers.get('Location');
+        if (location && location.includes('/api/status/')) {
+          currentJobId = location.split('/').pop();
+          startPolling(location);
+        } else {
+          throw new Error('Invalid redirect location');
+        }
+        
+      } else {
+        // Error response
         const ct = res.headers.get('Content-Type') || '';
         let errorMessage;
         
@@ -167,75 +225,242 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(errorMessage);
       }
 
-      const json = await res.json();
-      console.log('API Response:', json);
-
-      // Validate response structure
-      if (!json.model_url) {
-        throw new Error('No model_url in response. Expected format: {"model_url": "/api/output/filename"}');
-      }
-
-      // Get the primary model URL for the 3D viewer
-      modelUrl = `http://${HOST}:5000${json.model_url}`;
-      console.log('Model URL:', modelUrl);
-
-      // Get available export formats
-      if (json.formats) {
-        // Convert relative URLs to full API URLs
-        Object.keys(json.formats).forEach(format => {
-          exportFormats[format] = `http://${HOST}:5000${json.formats[format]}`;
-        });
-        console.log('Available formats from API:', exportFormats);
-      } else {
-        // Fallback: derive format from primary model URL
-        const extension = json.model_url.split('.').pop().toLowerCase();
-        exportFormats[extension] = modelUrl;
-        console.log('Fallback format detection:', extension);
-      }
-
-      // Ensure common formats are available
-      if (!exportFormats.obj && !exportFormats.glb && !exportFormats.gltf) {
-        console.warn('No common 3D formats found, using primary model URL');
-        const extension = json.model_url.split('.').pop().toLowerCase();
-        exportFormats[extension] = modelUrl;
-      }
-
-      // Store model data globally
-      currentModelData = {
-        modelUrl: modelUrl,
-        exportFormats: exportFormats,
-        originalResponse: json
-      };
-
-      console.log('Model data stored:', currentModelData);
-
     } catch(err) {
-      console.error('Conversion failed:', err);
+      console.error('Conversion start failed:', err);
       
-      let errorMsg = 'Conversion failed';
+      let errorMsg = 'Failed to start conversion';
       if (err.name === 'AbortError') {
-        errorMsg = 'Request timed out. The model generation is taking too long.';
+        errorMsg = 'Upload timed out. Please try again.';
       } else if (err.message) {
         errorMsg = err.message;
       }
       
+      showErrorMessage(`Error: ${errorMsg}`);
       showToast(`Error: ${errorMsg}`, 'error');
+      updateProgress(0, 'Failed', 'error');
       tabs[0].click(); // Go back to upload tab
-      finishProgress();
-      return;
+    }
+  }
+
+  /**
+   * Start polling the status endpoint for job updates
+   */
+  function startPolling(statusUrl) {
+    console.log('Starting polling for:', statusUrl);
+    updateProgress(5, 'Processing started...', 'running');
+    
+    // Ensure we have a full URL
+    const fullStatusUrl = statusUrl.startsWith('http') ? statusUrl : `http://${HOST}:5000${statusUrl}`;
+    
+    // Poll every 2 seconds
+    pollingInterval = setInterval(async () => {
+      await pollStatus(fullStatusUrl);
+    }, 2000);
+    
+    // Also poll immediately
+    pollStatus(fullStatusUrl);
+  }
+
+  /**
+   * Poll the status endpoint once
+   */
+  async function pollStatus(statusUrl) {
+    try {
+      console.log('Polling status:', statusUrl);
+      
+      const res = await fetch(statusUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(10000) // 10 second timeout for status check
+      });
+      
+      if (!res.ok) {
+        throw new Error(`Status check failed: ${res.status} ${res.statusText}`);
+      }
+      
+      const status = await res.json();
+      console.log('Status update:', status);
+      
+      handleStatusUpdate(status);
+      
+    } catch (err) {
+      console.error('Status polling error:', err);
+      
+      // Don't stop polling for network errors, just log them
+      if (err.name !== 'AbortError') {
+        console.warn('Continuing polling despite error:', err.message);
+      }
+    }
+  }
+
+  /**
+   * Handle a status update from the polling endpoint
+   */
+  function handleStatusUpdate(status) {
+    const { status: jobStatus, progress, message, model_url } = status;
+    
+    switch (jobStatus) {
+      case 'pending':
+        updateProgress(
+          Math.max(5, (progress || 0) * 100), 
+          message || 'Waiting in queue...', 
+          'pending'
+        );
+        break;
+        
+      case 'running':
+        updateProgress(
+          Math.max(10, Math.min(95, (progress || 0.1) * 100)), 
+          message || 'Processing with Hunyuan3D...', 
+          'running'
+        );
+        break;
+        
+      case 'done':
+        stopPolling();
+        updateProgress(100, 'Complete!', 'done');
+        
+        if (model_url) {
+          handleConversionComplete({ model_url });
+        } else {
+          showErrorMessage('Conversion completed but no model URL provided');
+          updateProgress(100, 'Error: No model generated', 'error');
+        }
+        break;
+        
+      case 'error':
+        stopPolling();
+        const errorMsg = message || 'Conversion failed';
+        showErrorMessage(`Conversion error: ${errorMsg}`);
+        showToast(`Conversion failed: ${errorMsg}`, 'error');
+        updateProgress(0, 'Failed', 'error');
+        tabs[0].click(); // Go back to upload tab
+        break;
+        
+      default:
+        console.warn('Unknown job status:', jobStatus);
+        updateProgress(
+          (progress || 0) * 100, 
+          message || `Status: ${jobStatus}`, 
+          'running'
+        );
+    }
+  }
+
+  /**
+   * Handle successful conversion completion
+   */
+  function handleConversionComplete(result) {
+    console.log('Conversion completed:', result);
+    
+    // Get the primary model URL for the 3D viewer
+    const modelUrl = `http://${HOST}:5000${result.model_url}`;
+    console.log('Model URL:', modelUrl);
+
+    // Get available export formats
+    let exportFormats = {};
+    if (result.formats) {
+      // Convert relative URLs to full API URLs
+      Object.keys(result.formats).forEach(format => {
+        exportFormats[format] = `http://${HOST}:5000${result.formats[format]}`;
+      });
+      console.log('Available formats from API:', exportFormats);
+    } else {
+      // Fallback: derive format from primary model URL
+      const extension = result.model_url.split('.').pop().toLowerCase();
+      exportFormats[extension] = modelUrl;
+      console.log('Fallback format detection:', extension);
     }
 
-    finishProgress();
+    // Ensure common formats are available
+    if (!exportFormats.obj && !exportFormats.glb && !exportFormats.gltf) {
+      console.warn('No common 3D formats found, using primary model URL');
+      const extension = result.model_url.split('.').pop().toLowerCase();
+      exportFormats[extension] = modelUrl;
+    }
+
+    // Store model data globally
+    currentModelData = {
+      modelUrl: modelUrl,
+      exportFormats: exportFormats,
+      originalResponse: result,
+      jobId: currentJobId
+    };
+
+    console.log('Model data stored:', currentModelData);
     
     // Wait a moment, then switch to View tab and initialize viewer
     setTimeout(() => {
       tabs[2].click();
       initializeViewer();
-    }, 500);
-  });
+    }, 1000);
+  }
+
+  /**
+   * Stop polling
+   */
+  function stopPolling() {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+      console.log('Polling stopped');
+    }
+  }
 
   //
-  // 4) INITIALIZE 3D VIEWER
+  // 4) PROGRESS MANAGEMENT
+  //
+  function updateProgress(percent, text, status = 'running') {
+    // Update progress bar
+    const progressFill = document.querySelector('.progress-fill');
+    const progressPercent = document.querySelector('.progress-percent');
+    const progressText = document.querySelector('.progress-text');
+    
+    if (progressFill) {
+      progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    }
+    
+    if (progressPercent) {
+      progressPercent.textContent = `${Math.floor(percent)}%`;
+    }
+    
+    if (progressText) {
+      progressText.textContent = text;
+    }
+    
+    // Update status badges based on progress
+    const statusBadges = document.querySelectorAll('.status-badge');
+    statusBadges.forEach(badge => {
+      if (status === 'done') {
+        badge.classList.add('complete');
+      } else if (status === 'error') {
+        badge.classList.remove('complete');
+        badge.classList.add('error');
+      } else {
+        badge.classList.remove('complete', 'error');
+      }
+    });
+    
+    console.log(`Progress: ${percent}% - ${text} (${status})`);
+  }
+
+  function showErrorMessage(message) {
+    const errorElement = document.getElementById('error-message');
+    if (errorElement) {
+      errorElement.textContent = message;
+      errorElement.style.display = 'block';
+    }
+  }
+
+  function clearErrorMessage() {
+    const errorElement = document.getElementById('error-message');
+    if (errorElement) {
+      errorElement.style.display = 'none';
+      errorElement.textContent = '';
+    }
+  }
+
+  //
+  // 5) INITIALIZE 3D VIEWER
   //
   async function initializeViewer() {
     if (!currentModelData) {
@@ -263,7 +488,10 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('Initializing 3D viewer with URL:', currentModelData.modelUrl);
       
       // Check if the model file exists by making a HEAD request
-      const checkResponse = await fetch(currentModelData.modelUrl, { method: 'HEAD' });
+      const checkResponse = await fetch(currentModelData.modelUrl, { 
+        method: 'HEAD',
+        signal: AbortSignal.timeout(10000)
+      });
       if (!checkResponse.ok) {
         throw new Error(`Model file not accessible: ${checkResponse.status} ${checkResponse.statusText}`);
       }
@@ -305,27 +533,33 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   //
-  // 5) VIEW SECTION BUTTONS
+  // 6) VIEW SECTION BUTTONS
   //
   // Refine button (placeholder functionality)
-  document.getElementById('refine-btn').onclick = () => {
-    showToast('Mesh refinement is coming soon! 🔧', 'info');
-  };
+  const refineBtn = document.getElementById('refine-btn');
+  if (refineBtn) {
+    refineBtn.onclick = () => {
+      showToast('Mesh refinement is coming soon! 🔧', 'info');
+    };
+  }
 
   // Export button in view section - should navigate to export section
-  document.getElementById('export-btn').onclick = () => {
-    if (!currentModelData) {
-      showToast('No model available for export', 'error');
-      return;
-    }
-    
-    // Switch to export section
-    tabs[3].click();
-    setupExportSection();
-  };
+  const exportBtn = document.getElementById('export-btn');
+  if (exportBtn) {
+    exportBtn.onclick = () => {
+      if (!currentModelData) {
+        showToast('No model available for export', 'error');
+        return;
+      }
+      
+      // Switch to export section
+      tabs[3].click();
+      setupExportSection();
+    };
+  }
 
   //
-  // 6) EXPORT SECTION SETUP
+  // 7) EXPORT SECTION SETUP
   //
   function setupExportSection() {
     if (!currentModelData) {
@@ -510,89 +744,54 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   //
-  // 7) EXPORT SECTION UTILITY BUTTONS
+  // 8) EXPORT SECTION UTILITY BUTTONS
   //
   // Back to view button
-  document.getElementById('back-to-view-btn').onclick = () => {
-    tabs[2].click();
-  };
-
-  // New project button
-  document.getElementById('new-project-btn').onclick = () => {
-    if (!confirm('Start new project? This will clear the current model.')) return;
-    
-    // Reset the application state
-    files = [];
-    currentModelData = null;
-    refreshList();
-    tabs[0].click();
-    
-    // Clear the 3D viewer
-    const modelViewer = document.getElementById('model-viewer');
-    if (modelViewer) {
-      modelViewer.innerHTML = `
-        <div class="viewer-empty-state">
-          <i class="fas fa-cube"></i>
-          <p>3D model will appear here</p>
-        </div>`;
-    }
-    
-    // Clear export section
-    const exportOptionsContainer = document.querySelector('.export-options');
-    if (exportOptionsContainer) {
-      exportOptionsContainer.innerHTML = '';
-    }
-    
-    // Reset progress
-    const progressFill = document.querySelector('.progress-fill');
-    const progressPercent = document.querySelector('.progress-percent');
-    const progressText = document.querySelector('.progress-text');
-    
-    if (progressFill) progressFill.style.width = '0%';
-    if (progressPercent) progressPercent.textContent = '0%';
-    if (progressText) progressText.textContent = 'Ready';
-    
-    document.querySelectorAll('.status-badge').forEach(b => b.classList.remove('complete'));
-    
-    showToast('New project started!', 'success');
-  };
-
-  //
-  // 8) PROGRESS ANIMATION
-  //
-  function startProgress() {
-    const txt = document.querySelector('.progress-text');
-    const pct = document.querySelector('.progress-percent');
-    const bar = document.querySelector('.progress-fill');
-    let p = 0;
-    const iv = setInterval(() => {
-      p = Math.min(95, p + Math.random()*8 + 2);
-      bar.style.width = p + '%';
-      pct.textContent = Math.floor(p) + '%';
-      
-      if (p < 20) {
-        txt.textContent = 'Uploading images...';
-      } else if (p < 40) {
-        txt.textContent = 'Analyzing images...';
-      } else if (p < 60) {
-        txt.textContent = 'Processing with Hunyuan3D...';
-      } else if (p < 80) {
-        txt.textContent = 'Generating 3D mesh...';
-      } else {
-        txt.textContent = 'Finalizing model...';
-      }
-      
-      document.querySelector('.progress-container').dataset.iv = iv;
-    }, 400);
+  const backToViewBtn = document.getElementById('back-to-view-btn');
+  if (backToViewBtn) {
+    backToViewBtn.onclick = () => {
+      tabs[2].click();
+    };
   }
 
-  function finishProgress() {
-    const iv = +document.querySelector('.progress-container').dataset.iv;
-    if (iv) clearInterval(iv);
-    document.querySelector('.progress-fill').style.width = '100%';
-    document.querySelector('.progress-percent').textContent = '100%';
-    document.querySelector('.progress-text').textContent = 'Complete!';
-    document.querySelectorAll('.status-badge').forEach(b => b.classList.add('complete'));
+  // New project button
+  const newProjectBtn = document.getElementById('new-project-btn');
+  if (newProjectBtn) {
+    newProjectBtn.onclick = () => {
+      if (!confirm('Start new project? This will clear the current model.')) return;
+      
+      // Stop any active polling
+      stopPolling();
+      
+      // Reset the application state
+      files = [];
+      currentModelData = null;
+      currentJobId = null;
+      refreshList();
+      tabs[0].click();
+      clearErrorMessage();
+      
+      // Clear the 3D viewer
+      const modelViewer = document.getElementById('model-viewer');
+      if (modelViewer) {
+        modelViewer.innerHTML = `
+          <div class="viewer-empty-state">
+            <i class="fas fa-cube"></i>
+            <p>3D model will appear here</p>
+          </div>`;
+      }
+      
+      // Clear export section
+      const exportOptionsContainer = document.querySelector('.export-options');
+      if (exportOptionsContainer) {
+        exportOptionsContainer.innerHTML = '';
+      }
+      
+      // Reset progress
+      updateProgress(0, 'Ready', 'ready');
+      
+      showToast('New project started!', 'success');
+    };
   }
 
   //
@@ -661,6 +860,14 @@ document.addEventListener('DOMContentLoaded', () => {
           background-color: #fee2e2;
           color: #991b1b;
         }
+        .status-badge.complete {
+          background-color: #d1fae5;
+          color: #065f46;
+        }
+        .status-badge.error {
+          background-color: #fee2e2;
+          color: #991b1b;
+        }
         .export-card-actions {
           display: flex;
           gap: 0.5rem;
@@ -703,6 +910,15 @@ document.addEventListener('DOMContentLoaded', () => {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+        #error-message {
+          display: none;
+          background-color: #fee2e2;
+          border: 1px solid #fecaca;
+          color: #991b1b;
+          padding: 0.75rem;
+          border-radius: 0.375rem;
+          margin: 1rem 0;
         }
       `;
       document.head.appendChild(style);
@@ -775,6 +991,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 300);
     }, 4000);
   }
+
+  // Cleanup polling on page unload
+  window.addEventListener('beforeunload', () => {
+    stopPolling();
+  });
 
   console.log('main.js initialization complete');
   refreshList(); // Initialize empty state
