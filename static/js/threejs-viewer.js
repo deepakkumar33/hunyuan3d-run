@@ -6,13 +6,16 @@ let scene, camera, renderer, controls, currentMesh;
 let autoRotate = false;
 let wireframeEnabled = false;
 let wireframeMesh = null;
+let isPointCloud = false;
+let pointSize = 1.0;
 
 // Make functions available globally so main.js can access them
 window.ThreeJSViewer = {
   initThreeJSViewer: initThreeJSViewer,
   loadModel: loadModel,
   toggleWireframe: toggleWireframe,
-  toggleAutoRotate: toggleAutoRotate
+  toggleAutoRotate: toggleAutoRotate,
+  setPointSize: setPointSize // For debugging point cloud
 };
 
 async function initThreeJSViewer() {
@@ -195,6 +198,156 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+function createPointCloudFromGeometry(geometry, boundingBox) {
+  console.log('Creating point cloud from geometry...');
+  
+  // Extract position data
+  const positions = geometry.attributes.position;
+  if (!positions) {
+    throw new Error('No position data found in geometry');
+  }
+  
+  const vertexCount = positions.count;
+  console.log(`Creating point cloud with ${vertexCount} vertices`);
+  
+  // Calculate appropriate point size based on bounding box
+  const size = boundingBox.getSize(new THREE.Vector3());
+  const maxDimension = Math.max(size.x, size.y, size.z);
+  
+  // Scale point size based on model size and vertex density
+  let basePointSize = maxDimension / 100; // Base size relative to model
+  
+  // Adjust for vertex density - fewer vertices = larger points
+  if (vertexCount < 1000) {
+    basePointSize *= 2.0;
+  } else if (vertexCount < 10000) {
+    basePointSize *= 1.5;
+  } else if (vertexCount > 100000) {
+    basePointSize *= 0.5;
+  }
+  
+  // Ensure minimum and maximum point sizes
+  basePointSize = Math.max(0.001, Math.min(0.1, basePointSize));
+  pointSize = basePointSize;
+  
+  console.log(`Point size calculated: ${basePointSize} (model max dimension: ${maxDimension})`);
+  
+  // Create efficient BufferGeometry for points
+  const pointGeometry = new THREE.BufferGeometry();
+  pointGeometry.setAttribute('position', positions);
+  
+  // Add colors if available, otherwise use vertex positions for gradient
+  let colors = geometry.attributes.color;
+  if (!colors) {
+    // Create gradient colors based on Y position
+    const colorArray = new Float32Array(vertexCount * 3);
+    const posArray = positions.array;
+    
+    // Find Y range for color mapping
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 1; i < posArray.length; i += 3) {
+      const y = posArray[i];
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    const yRange = maxY - minY || 1;
+    
+    // Generate colors
+    for (let i = 0; i < vertexCount; i++) {
+      const y = posArray[i * 3 + 1];
+      const normalizedY = (y - minY) / yRange;
+      
+      // Create blue to gold gradient
+      colorArray[i * 3] = 0.2 + normalizedY * 0.8;     // R: blue to gold
+      colorArray[i * 3 + 1] = 0.2 + normalizedY * 0.6; // G: blue to gold  
+      colorArray[i * 3 + 2] = 1.0 - normalizedY * 0.8; // B: blue to gold
+    }
+    
+    pointGeometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+    console.log('Generated gradient colors for point cloud');
+  } else {
+    pointGeometry.setAttribute('color', colors);
+    console.log('Using existing colors from geometry');
+  }
+  
+  // Create point material with size attenuation
+  const pointMaterial = new THREE.PointsMaterial({
+    size: basePointSize,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.8,
+    depthTest: true,
+    depthWrite: false
+  });
+  
+  // Create Points object
+  const points = new THREE.Points(pointGeometry, pointMaterial);
+  
+  console.log('Point cloud created successfully');
+  return points;
+}
+
+function showPointCloudNotice(container, vertexCount) {
+  // Remove any existing notice
+  const existingNotice = container.querySelector('.point-cloud-notice');
+  if (existingNotice) {
+    existingNotice.remove();
+  }
+  
+  // Create notice element
+  const notice = document.createElement('div');
+  notice.className = 'point-cloud-notice';
+  notice.style.cssText = `
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #ffd700;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: monospace;
+    z-index: 1000;
+    border: 1px solid #ffd700;
+  `;
+  notice.innerHTML = `
+    <i class="fas fa-info-circle"></i>
+    Rendering as point-cloud (${vertexCount.toLocaleString()} vertices)
+  `;
+  
+  container.appendChild(notice);
+  
+  // Optionally add point size control for debugging (commented out by default)
+  /*
+  const sizeControl = document.createElement('div');
+  sizeControl.style.cssText = `
+    position: absolute;
+    top: 45px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    z-index: 1000;
+  `;
+  sizeControl.innerHTML = `
+    <label>Point Size: <input type="range" min="0.1" max="5" step="0.1" value="${pointSize}" 
+           onchange="window.ThreeJSViewer.setPointSize(this.value)" style="width: 80px;"></label>
+  `;
+  container.appendChild(sizeControl);
+  */
+}
+
+function setPointSize(newSize) {
+  pointSize = parseFloat(newSize);
+  if (currentMesh && isPointCloud && currentMesh.material) {
+    currentMesh.material.size = pointSize;
+    console.log('Point size updated to:', pointSize);
+  }
+}
+
 async function loadModel(modelUrl) {
   console.log('Loading model from:', modelUrl);
 
@@ -207,7 +360,7 @@ async function loadModel(modelUrl) {
   const container = document.getElementById('model-viewer');
   showLoadingState(container);
 
-  // Remove existing model
+  // Remove existing model and notices
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh = null;
@@ -217,6 +370,14 @@ async function loadModel(modelUrl) {
     scene.remove(wireframeMesh);
     wireframeMesh = null;
   }
+  
+  // Remove point cloud notice
+  const existingNotice = container.querySelector('.point-cloud-notice');
+  if (existingNotice) {
+    existingNotice.remove();
+  }
+  
+  isPointCloud = false;
 
   // Determine file type and create loader
   const extension = modelUrl.split('.').pop().toLowerCase();
@@ -230,6 +391,14 @@ async function loadModel(modelUrl) {
         console.log('Using OBJLoader');
       } else {
         throw new Error('OBJLoader not available - please check CDN loading');
+      }
+    } else if (extension === 'ply') {
+      // Check if PLYLoader is available
+      if (typeof THREE !== 'undefined' && THREE.PLYLoader) {
+        loader = new THREE.PLYLoader();
+        console.log('Using PLYLoader');
+      } else {
+        throw new Error('PLYLoader not available - please check CDN loading');
       }
     } else if (extension === 'gltf' || extension === 'glb') {
       // Check if GLTFLoader is available
@@ -274,18 +443,54 @@ async function loadModel(modelUrl) {
     let modelObject;
     if (extension === 'gltf' || extension === 'glb') {
       modelObject = asset.scene;
+    } else if (extension === 'ply') {
+      // PLY loader returns geometry directly
+      const geometry = asset;
+      modelObject = new THREE.Group();
+      
+      // Check if PLY has faces
+      const hasIndices = geometry.index && geometry.index.count > 0;
+      const vertexCount = geometry.attributes.position ? geometry.attributes.position.count : 0;
+      
+      console.log(`PLY stats: ${vertexCount} vertices, ${hasIndices ? geometry.index.count / 3 : 0} faces`);
+      
+      if (!hasIndices && vertexCount > 0) {
+        // Create point cloud for PLY without faces
+        const box = new THREE.Box3().setFromBufferAttribute(geometry.attributes.position);
+        const pointCloud = createPointCloudFromGeometry(geometry, box);
+        modelObject.add(pointCloud);
+        isPointCloud = true;
+        console.log('Rendering PLY as point-cloud (no faces)');
+        showPointCloudNotice(container, vertexCount);
+      } else if (hasIndices) {
+        // Create mesh for PLY with faces
+        const material = new THREE.MeshPhongMaterial({
+          color: 0xffd700,
+          side: THREE.DoubleSide
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        modelObject.add(mesh);
+      } else {
+        throw new Error('PLY file contains no valid geometry');
+      }
     } else {
       modelObject = asset;
     }
 
-    // Validate and process geometry
+    // Validate and process geometry for OBJ files
     let hasValidGeometry = false;
     let vertexCount = 0;
     let faceCount = 0;
+    let firstGeometry = null;
     
     modelObject.traverse((child) => {
       if (child.isMesh && child.geometry) {
         hasValidGeometry = true;
+        
+        // Store first geometry for point cloud fallback
+        if (!firstGeometry) {
+          firstGeometry = child.geometry;
+        }
         
         // Count vertices and faces for debugging
         if (child.geometry.attributes.position) {
@@ -330,6 +535,34 @@ async function loadModel(modelUrl) {
       throw new Error('Model contains no vertices');
     }
 
+    // Check if we need to create a point cloud fallback (for OBJ with no faces)
+    if (faceCount === 0 && firstGeometry && extension === 'obj') {
+      console.log('No faces detected, creating point cloud fallback');
+      
+      // Remove the mesh children and create point cloud instead
+      const meshesToRemove = [];
+      modelObject.traverse((child) => {
+        if (child.isMesh) {
+          meshesToRemove.push(child);
+        }
+      });
+      
+      meshesToRemove.forEach(mesh => {
+        if (mesh.parent) {
+          mesh.parent.remove(mesh);
+        }
+      });
+      
+      // Create point cloud from the first geometry
+      const box = new THREE.Box3().setFromBufferAttribute(firstGeometry.attributes.position);
+      const pointCloud = createPointCloudFromGeometry(firstGeometry, box);
+      modelObject.add(pointCloud);
+      isPointCloud = true;
+      
+      console.log(`Rendering as point-cloud (${vertexCount} vertices)`);
+      showPointCloudNotice(container, vertexCount);
+    }
+
     // Add model to scene
     scene.add(modelObject);
     currentMesh = modelObject;
@@ -358,6 +591,13 @@ async function loadModel(modelUrl) {
       const scale = 4 / maxDimension;
       currentMesh.scale.setScalar(scale);
       console.log('Applied scale factor:', scale);
+      
+      // Update point size if it's a point cloud
+      if (isPointCloud && currentMesh.children[0] && currentMesh.children[0].material) {
+        const adjustedPointSize = pointSize * scale;
+        currentMesh.children[0].material.size = adjustedPointSize;
+        console.log('Adjusted point size for scaling:', adjustedPointSize);
+      }
     }
 
     // Update camera position to view the model
@@ -371,8 +611,9 @@ async function loadModel(modelUrl) {
       controls.update();
     }
 
-    // Add a visible test cube to confirm scene is working
-    const testGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    // Add a visible test cube to confirm scene is working (smaller for point clouds)
+    const testSize = isPointCloud ? 0.2 : 0.5;
+    const testGeometry = new THREE.BoxGeometry(testSize, testSize, testSize);
     const testMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
     const testCube = new THREE.Mesh(testGeometry, testMaterial);
     testCube.position.set(3, 3, 3);
@@ -389,6 +630,7 @@ async function loadModel(modelUrl) {
     console.log('Current mesh position:', currentMesh.position);
     console.log('Current mesh scale:', currentMesh.scale);
     console.log('Camera position:', camera.position);
+    console.log('Is point cloud:', isPointCloud);
 
   } catch (error) {
     console.error('Failed to load model:', error);
@@ -447,11 +689,18 @@ function showErrorState(container, message) {
 }
 
 function setupViewerControls() {
-  // Wireframe toggle
+  // Wireframe toggle (disabled for point clouds)
   const wireframeToggle = document.getElementById('wireframe-toggle');
   if (wireframeToggle) {
+    wireframeToggle.disabled = isPointCloud;
+    if (isPointCloud) {
+      wireframeToggle.checked = false;
+      wireframeEnabled = false;
+    }
     wireframeToggle.addEventListener('change', (e) => {
-      toggleWireframe(e.target.checked);
+      if (!isPointCloud) {
+        toggleWireframe(e.target.checked);
+      }
     });
   }
 
@@ -465,6 +714,11 @@ function setupViewerControls() {
 }
 
 function toggleWireframe(enabled) {
+  if (isPointCloud) {
+    console.log('Wireframe not supported for point clouds');
+    return;
+  }
+  
   wireframeEnabled = enabled;
   
   if (!currentMesh) return;
