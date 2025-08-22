@@ -330,7 +330,8 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'done':
       case 'finished': // Handle both 'done' and 'finished' as completion states
         stopPolling();
-        updateProgress(100, 'Complete!', 'done');
+        console.log('🏁 Job completed, stopping status polling');
+        updateProgress(100, 'Conversion complete! Preparing to load model...', 'done');
         
         if (model_url) {
           handleConversionComplete({ model_url });
@@ -543,14 +544,10 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log(`🎮 Loading model into viewer (attempt ${attempt}):`, modelUrl);
     
     try {
-      // Add cache busting to the model URL for the viewer
-      const cacheBuster = Date.now() + Math.random().toString(36).substr(2, 9);
-      const viewerUrl = `${modelUrl}?_cb=${cacheBuster}`;
-      
       // Call the existing initializeViewer function if it exists
       if (window.initializeViewer && typeof window.initializeViewer === 'function') {
         console.log('📞 Calling existing initializeViewer function');
-        await window.initializeViewer(viewerUrl);
+        await window.initializeViewer(modelUrl);
         console.log('✅ Model loaded successfully via initializeViewer');
         return true;
       }
@@ -558,7 +555,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Fallback: try ThreeJSViewer if initializeViewer is not available
       if (window.ThreeJSViewer && typeof window.ThreeJSViewer.loadModel === 'function') {
         console.log('📞 Using ThreeJSViewer.loadModel');
-        await window.ThreeJSViewer.loadModel(viewerUrl);
+        await window.ThreeJSViewer.loadModel(modelUrl);
         console.log('✅ Model loaded successfully via ThreeJSViewer');
         return true;
       }
@@ -687,8 +684,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Use the new loadModelIntoViewer function
-    await loadModelIntoViewer(currentModelData.modelUrl);
+    // Use the new loadModelWithRetry function for robustness
+    return await loadModelWithRetry(currentModelData.modelUrl);
   }
 
   function showFallbackViewer(message = '3D viewer is not available') {
@@ -1083,6 +1080,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         .viewer-success .btn {
           margin-top: 1rem;
+        }
+        .viewer-error .btn {
+          margin: 0.25rem;
+          padding: 0.5rem 1rem;
+          font-size: 0.9rem;
+        }
+        .btn-secondary {
+          background-color: #6b7280;
+          color: white;
+          border: none;
+          border-radius: 0.375rem;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+        .btn-secondary:hover {
+          background-color: #4b5563;
         }
         @keyframes spin {
           from { transform: rotate(0deg); }
