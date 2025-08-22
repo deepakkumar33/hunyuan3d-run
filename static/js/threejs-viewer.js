@@ -535,8 +535,11 @@ async function loadModel(modelUrl) {
   
   isPointCloud = false;
 
-  // Determine file type and create loader
-  const extension = modelUrl.split('.').pop().toLowerCase();
+  // Extract clean URL and file extension (remove query parameters for extension detection)
+  const cleanUrl = modelUrl.split('?')[0]; // Remove query parameters
+  const extension = cleanUrl.split('.').pop().toLowerCase();
+  console.log('Detected file extension:', extension);
+  
   let loader = null;
   
   try {
@@ -568,14 +571,14 @@ async function loadModel(modelUrl) {
       throw new Error(`Unsupported file format: ${extension}`);
     }
 
-    // Load the model with better error handling
+    // Load the model with better error handling (use full URL with cache busting)
     const asset = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error('Model loading timed out'));
       }, 60000); // 60 second timeout
 
       loader.load(
-        modelUrl,
+        modelUrl, // Use the full URL with cache busting
         (result) => {
           clearTimeout(timeoutId);
           console.log('Model loaded successfully');
