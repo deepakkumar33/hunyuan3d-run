@@ -423,9 +423,9 @@ document.addEventListener('DOMContentLoaded', () => {
   /**
    * Load the model with robust retry logic and better error handling
    */
-  async function loadModelWithRetry(modelUrl, attempt = 1, maxAttempts = 5) {
-    const baseDelay = 2000; // 2 seconds base delay
-    const maxDelay = 30000; // 30 seconds max delay
+  async function loadModelWithRetry(modelUrl, attempt = 1, maxAttempts = 3) {
+    const baseDelay = 3000; // 3 seconds base delay
+    const maxDelay = 15000; // 15 seconds max delay
     
     console.log(`🔄 Loading model attempt ${attempt}/${maxAttempts}: ${modelUrl}`);
     
@@ -445,7 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <i class="fas fa-spinner fa-spin"></i>
         <p>Loading 3D model...</p>
         <p class="viewer-info">Attempt ${attempt} of ${maxAttempts}</p>
-        <p class="viewer-info">Please wait...</p>
+        <p class="viewer-info">Large files may take several minutes...</p>
       </div>
     `;
 
@@ -458,7 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const checkResponse = await fetch(checkUrl, { 
         method: 'HEAD',
-        signal: AbortSignal.timeout(15000), // 15 second timeout for accessibility check
+        signal: AbortSignal.timeout(30000), // 30 second timeout for accessibility check
         cache: 'no-cache' // Force fresh request
       });
       
@@ -472,13 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       console.log(`✅ Model file accessible (attempt ${attempt}), size: ${fileSize} bytes`);
       
-      // Step 2: Wait a moment for file system consistency
-      if (attempt === 1) {
-        console.log('⏳ Waiting for file system consistency...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
-      // Step 3: Load the model into the viewer
+      // Step 2: Load the model into the viewer
       console.log(`🎨 Loading model into viewer (attempt ${attempt})...`);
       
       const loadSuccess = await loadModelIntoViewer(modelUrl, attempt);
@@ -487,6 +481,15 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log(`✅ Model loaded successfully on attempt ${attempt}`);
         updateProgress(100, 'Model loaded successfully!', 'done');
         showToast('3D model loaded successfully!', 'success');
+        
+        // Force refresh of the view tab to ensure model is visible
+        setTimeout(() => {
+          const viewTab = document.querySelector('[href="#view-section"]');
+          if (viewTab) {
+            viewTab.click();
+          }
+        }, 500);
+        
         return true;
       } else {
         throw new Error('Model loading returned false');
@@ -498,14 +501,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // Check if we should retry
       if (attempt < maxAttempts) {
         // Calculate exponential backoff delay
-        const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+        const delay = Math.min(baseDelay * Math.pow(1.5, attempt - 1), maxDelay);
         const jitter = Math.random() * 1000; // Add jitter to prevent thundering herd
         const totalDelay = delay + jitter;
         
         console.log(`⏰ Retrying in ${(totalDelay / 1000).toFixed(1)} seconds...`);
         
         // Update UI to show retry countdown
-        updateProgress(100, `Retrying in ${Math.ceil(totalDelay / 1000)}s... (${err.message})`, 'retrying');
+        updateProgress(100, `Retrying in ${Math.ceil(totalDelay / 1000)}s...`, 'retrying');
         
         // Show retry state
         modelViewer.innerHTML = `
@@ -522,15 +525,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return loadModelWithRetry(modelUrl, attempt + 1, maxAttempts);
         
       } else {
-        // Max attempts reached
+        // Max attempts reached - show error with manual refresh option
         console.error(`❌ All ${maxAttempts} load attempts failed. Final error:`, err);
         
-        updateProgress(100, 'Model loading failed', 'error');
+        updateProgress(100, 'Model loading failed - click to retry', 'error');
         showErrorMessage(`Failed to load 3D model after ${maxAttempts} attempts: ${err.message}`);
         
-        // Show failure state with manual retry option
-        showFailureViewer(err.message, modelUrl);
-        showToast(`Model loading failed after ${maxAttempts} attempts`, 'error');
+        // Show failure state with auto-refresh option
+        showFailureViewerWithAutoRefresh(err.message, modelUrl);
+        showToast(`Model loading failed - manual retry available`, 'error');
         
         return false;
       }
@@ -580,9 +583,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Show failure state with manual retry option
+   * Show failure state with auto-refresh and manual retry options
    */
-  function showFailureViewer(errorMessage, modelUrl) {
+  function showFailureViewerWithAutoRefresh(errorMessage, modelUrl) {
     const modelViewer = document.getElementById('model-viewer');
     if (!modelViewer) return;
     
@@ -595,19 +598,47 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="btn btn-primary" onclick="window.retryModelLoad('${modelUrl}')" style="margin-right: 0.5rem;">
             <i class="fas fa-retry"></i> Retry Loading
           </button>
+          <button class="btn btn-primary" onclick="window.forceRefreshViewer()" style="margin-right: 0.5rem;">
+            <i class="fas fa-refresh"></i> Refresh Viewer
+          </button>
           <button onclick="document.querySelector('[href=\\'#export-section\\']').click()" class="btn btn-secondary">
             <i class="fas fa-download"></i>
             Skip to Export
           </button>
         </div>
+        <p class="viewer-info" style="margin-top: 1rem; font-size: 0.8rem;">
+          If the model was generated successfully, try refreshing the viewer or check the export section.
+        </p>
       </div>
     `;
   }
 
-  // Make retry function globally available
+  // Make retry and refresh functions globally available
   window.retryModelLoad = function(modelUrl) {
     console.log('🔄 Manual retry requested for:', modelUrl);
     loadModelWithRetry(modelUrl, 1, 3); // Fewer attempts for manual retry
+  };
+
+  window.forceRefreshViewer = function() {
+    console.log('🔄 Force refresh viewer requested');
+    if (currentModelData && currentModelData.modelUrl) {
+      // Clear any existing model state
+      if (window.ThreeJSViewer && window.ThreeJSViewer.initThreeJSViewer) {
+        // Reinitialize the entire viewer
+        window.ThreeJSViewer.initThreeJSViewer().then(() => {
+          // Load the model after viewer is ready
+          return loadModelWithRetry(currentModelData.modelUrl, 1, 2);
+        }).catch(err => {
+          console.error('Viewer reinitialization failed:', err);
+          showToast('Viewer refresh failed', 'error');
+        });
+      } else {
+        // Just try to reload the model
+        loadModelWithRetry(currentModelData.modelUrl, 1, 2);
+      }
+    } else {
+      showToast('No model data available for refresh', 'error');
+    }
   };
 
   /**
