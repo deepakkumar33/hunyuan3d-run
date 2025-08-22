@@ -49,25 +49,33 @@ async function initThreeJSViewer() {
   // Initialize controls with fallback
   initializeControls();
 
-  // Enhanced lighting setup
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Increased ambient light
+  // Enhanced lighting setup for better visibility
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // Increased ambient light
   scene.add(ambientLight);
 
-  const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  const directionalLight1 = new THREE.DirectionalLight(0xffffff, 1.0); // Increased intensity
   directionalLight1.position.set(10, 10, 10);
   directionalLight1.castShadow = true;
   directionalLight1.shadow.mapSize.width = 2048;
   directionalLight1.shadow.mapSize.height = 2048;
   scene.add(directionalLight1);
 
-  const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+  const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.6); // Increased intensity
   directionalLight2.position.set(-10, -10, -10);
   scene.add(directionalLight2);
 
-  // Add point light for better jewelry illumination
-  const pointLight = new THREE.PointLight(0xffffff, 0.5, 100);
-  pointLight.position.set(0, 5, 5);
-  scene.add(pointLight);
+  // Add multiple point lights for better jewelry illumination
+  const pointLight1 = new THREE.PointLight(0xffffff, 0.8, 100);
+  pointLight1.position.set(5, 5, 5);
+  scene.add(pointLight1);
+  
+  const pointLight2 = new THREE.PointLight(0xffffff, 0.6, 100);
+  pointLight2.position.set(-5, 5, -5);
+  scene.add(pointLight2);
+  
+  const pointLight3 = new THREE.PointLight(0xffffff, 0.4, 100);
+  pointLight3.position.set(0, -5, 5);
+  scene.add(pointLight3);
 
   // Add grid helper
   const gridHelper = new THREE.GridHelper(10, 10, 0x404040, 0x404040);
@@ -207,88 +215,230 @@ function createPointCloudFromGeometry(geometry, boundingBox) {
     throw new Error('No position data found in geometry');
   }
   
-  const vertexCount = positions.count;
-  console.log(`Creating point cloud with ${vertexCount} vertices`);
+  const originalVertexCount = positions.count;
+  const posArray = positions.array;
+  console.log(`Original vertex count: ${originalVertexCount}`);
   
-  // Calculate appropriate point size based on bounding box
-  const size = boundingBox.getSize(new THREE.Vector3());
+  // Step 1: Clean vertices - remove NaN, Infinity, and extreme outliers
+  const cleanedVertices = [];
+  const validIndices = [];
+  let nanCount = 0;
+  let infCount = 0;
+  
+  // First pass: collect valid (finite) vertices
+  for (let i = 0; i < originalVertexCount; i++) {
+    const x = posArray[i * 3];
+    const y = posArray[i * 3 + 1]; 
+    const z = posArray[i * 3 + 2];
+    
+    // Check for NaN or Infinity
+    if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+      if (isNaN(x) || isNaN(y) || isNaN(z)) nanCount++;
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) infCount++;
+      continue;
+    }
+    
+    cleanedVertices.push({ x, y, z, index: i });
+    validIndices.push(i);
+  }
+  
+  console.log(`Removed ${nanCount} NaN vertices, ${infCount} Inf vertices`);
+  console.log(`Valid vertices after NaN/Inf cleanup: ${cleanedVertices.length}`);
+  
+  if (cleanedVertices.length === 0) {
+    throw new Error('No valid vertices found after cleaning');
+  }
+  
+  // Step 2: Calculate centroid and remove extreme outliers
+  let centroid = { x: 0, y: 0, z: 0 };
+  for (const vertex of cleanedVertices) {
+    centroid.x += vertex.x;
+    centroid.y += vertex.y;
+    centroid.z += vertex.z;
+  }
+  centroid.x /= cleanedVertices.length;
+  centroid.y /= cleanedVertices.length;
+  centroid.z /= cleanedVertices.length;
+  
+  console.log('Centroid:', centroid);
+  
+  // Calculate distances from centroid
+  const distances = cleanedVertices.map(vertex => {
+    const dx = vertex.x - centroid.x;
+    const dy = vertex.y - centroid.y;
+    const dz = vertex.z - centroid.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  });
+  
+  // Remove extreme outliers using IQR method
+  distances.sort((a, b) => a - b);
+  const q1 = distances[Math.floor(distances.length * 0.25)];
+  const q3 = distances[Math.floor(distances.length * 0.75)];
+  const iqr = q3 - q1;
+  const outlierThreshold = q3 + 3 * iqr; // More aggressive outlier removal
+  
+  console.log(`Distance stats - Q1: ${q1.toFixed(3)}, Q3: ${q3.toFixed(3)}, IQR: ${iqr.toFixed(3)}, Threshold: ${outlierThreshold.toFixed(3)}`);
+  
+  // Filter outliers
+  const filteredVertices = [];
+  let outlierCount = 0;
+  
+  for (const vertex of cleanedVertices) {
+    const dx = vertex.x - centroid.x;
+    const dy = vertex.y - centroid.y;
+    const dz = vertex.z - centroid.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    
+    if (distance <= outlierThreshold) {
+      filteredVertices.push(vertex);
+    } else {
+      outlierCount++;
+    }
+  }
+  
+  console.log(`Removed ${outlierCount} outlier vertices`);
+  console.log(`Final vertex count: ${filteredVertices.length}`);
+  
+  if (filteredVertices.length === 0) {
+    throw new Error('No vertices remain after outlier removal');
+  }
+  
+  // Step 3: Create new clean geometry
+  const cleanPositions = new Float32Array(filteredVertices.length * 3);
+  for (let i = 0; i < filteredVertices.length; i++) {
+    cleanPositions[i * 3] = filteredVertices[i].x;
+    cleanPositions[i * 3 + 1] = filteredVertices[i].y;
+    cleanPositions[i * 3 + 2] = filteredVertices[i].z;
+  }
+  
+  // Create efficient BufferGeometry for points
+  const pointGeometry = new THREE.BufferGeometry();
+  pointGeometry.setAttribute('position', new THREE.BufferAttribute(cleanPositions, 3));
+  
+  // Manually compute bounding box and sphere to verify
+  pointGeometry.computeBoundingBox();
+  pointGeometry.computeBoundingSphere();
+  
+  const bbox = pointGeometry.boundingBox;
+  const bsphere = pointGeometry.boundingSphere;
+  console.log('Clean geometry bounding box:', bbox);
+  console.log('Clean geometry bounding sphere radius:', bsphere.radius);
+  
+  if (!isFinite(bsphere.radius)) {
+    console.error('Still getting NaN radius after cleaning!');
+    // Fallback: manually set bounding sphere
+    const size = bbox.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    bsphere.radius = maxDim / 2;
+    bsphere.center.copy(bbox.getCenter(new THREE.Vector3()));
+    console.log('Applied manual bounding sphere:', bsphere);
+  }
+  
+  // Calculate appropriate point size based on cleaned bounding box
+  const size = bbox.getSize(new THREE.Vector3());
   const maxDimension = Math.max(size.x, size.y, size.z);
   
   // Scale point size based on model size and vertex density
-  let basePointSize = maxDimension / 100; // Base size relative to model
+  let basePointSize = maxDimension / 200; // Smaller base size for better visibility
   
   // Adjust for vertex density - fewer vertices = larger points
-  if (vertexCount < 1000) {
+  if (filteredVertices.length < 1000) {
+    basePointSize *= 3.0;
+  } else if (filteredVertices.length < 10000) {
     basePointSize *= 2.0;
-  } else if (vertexCount < 10000) {
-    basePointSize *= 1.5;
-  } else if (vertexCount > 100000) {
-    basePointSize *= 0.5;
+  } else if (filteredVertices.length > 100000) {
+    basePointSize *= 0.7;
   }
   
   // Ensure minimum and maximum point sizes
-  basePointSize = Math.max(0.001, Math.min(0.1, basePointSize));
+  basePointSize = Math.max(0.002, Math.min(0.2, basePointSize));
   pointSize = basePointSize;
   
   console.log(`Point size calculated: ${basePointSize} (model max dimension: ${maxDimension})`);
   
-  // Create efficient BufferGeometry for points
-  const pointGeometry = new THREE.BufferGeometry();
-  pointGeometry.setAttribute('position', positions);
+  // Create bright, visible colors - default to light gray/white
+  const colorArray = new Float32Array(filteredVertices.length * 3);
   
-  // Add colors if available, otherwise use vertex positions for gradient
-  let colors = geometry.attributes.color;
-  if (!colors) {
-    // Create gradient colors based on Y position
-    const colorArray = new Float32Array(vertexCount * 3);
-    const posArray = positions.array;
-    
-    // Find Y range for color mapping
-    let minY = Infinity, maxY = -Infinity;
-    for (let i = 1; i < posArray.length; i += 3) {
-      const y = posArray[i];
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-    }
-    const yRange = maxY - minY || 1;
-    
-    // Generate colors
-    for (let i = 0; i < vertexCount; i++) {
-      const y = posArray[i * 3 + 1];
-      const normalizedY = (y - minY) / yRange;
-      
-      // Create blue to gold gradient
-      colorArray[i * 3] = 0.2 + normalizedY * 0.8;     // R: blue to gold
-      colorArray[i * 3 + 1] = 0.2 + normalizedY * 0.6; // G: blue to gold  
-      colorArray[i * 3 + 2] = 1.0 - normalizedY * 0.8; // B: blue to gold
-    }
-    
-    pointGeometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
-    console.log('Generated gradient colors for point cloud');
-  } else {
-    pointGeometry.setAttribute('color', colors);
-    console.log('Using existing colors from geometry');
+  // Use original colors if available and valid
+  const originalColors = geometry.attributes.color;
+  let useOriginalColors = false;
+  
+  if (originalColors && validIndices.length > 0) {
+    // Check if we can map original colors to filtered vertices
+    useOriginalColors = true;
+    console.log('Attempting to use original colors');
   }
   
-  // Create point material with size attenuation
+  if (useOriginalColors && originalColors) {
+    // Map original colors to filtered vertices
+    let colorMappingSuccessful = true;
+    for (let i = 0; i < filteredVertices.length; i++) {
+      const originalIndex = filteredVertices[i].index;
+      if (originalIndex < originalColors.count) {
+        colorArray[i * 3] = originalColors.array[originalIndex * 3];
+        colorArray[i * 3 + 1] = originalColors.array[originalIndex * 3 + 1];
+        colorArray[i * 3 + 2] = originalColors.array[originalIndex * 3 + 2];
+        
+        // Validate color values
+        if (!isFinite(colorArray[i * 3]) || !isFinite(colorArray[i * 3 + 1]) || !isFinite(colorArray[i * 3 + 2])) {
+          colorMappingSuccessful = false;
+          break;
+        }
+      } else {
+        colorMappingSuccessful = false;
+        break;
+      }
+    }
+    
+    if (!colorMappingSuccessful) {
+      console.log('Original color mapping failed, using generated colors');
+      useOriginalColors = false;
+    } else {
+      console.log('Successfully mapped original colors');
+    }
+  }
+  
+  if (!useOriginalColors) {
+    // Generate bright, visible colors with Y-gradient
+    const minY = Math.min(...filteredVertices.map(v => v.y));
+    const maxY = Math.max(...filteredVertices.map(v => v.y));
+    const yRange = maxY - minY || 1;
+    
+    for (let i = 0; i < filteredVertices.length; i++) {
+      const normalizedY = (filteredVertices[i].y - minY) / yRange;
+      
+      // Create bright blue to gold gradient with high visibility
+      colorArray[i * 3] = 0.4 + normalizedY * 0.6;     // R: 0.4 to 1.0
+      colorArray[i * 3 + 1] = 0.4 + normalizedY * 0.5; // G: 0.4 to 0.9
+      colorArray[i * 3 + 2] = 0.8 - normalizedY * 0.6; // B: 0.8 to 0.2
+    }
+    console.log('Generated bright gradient colors for point cloud');
+  }
+  
+  pointGeometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+  
+  // Create point material with enhanced visibility
   const pointMaterial = new THREE.PointsMaterial({
     size: basePointSize,
     sizeAttenuation: true,
     vertexColors: true,
-    transparent: true,
-    opacity: 0.8,
+    transparent: false, // Make opaque for better visibility
+    opacity: 1.0,
     depthTest: true,
-    depthWrite: false
+    depthWrite: false,
+    alphaTest: 0.1 // Helps with rendering
   });
   
   // Create Points object
   const points = new THREE.Points(pointGeometry, pointMaterial);
   
   console.log('Point cloud created successfully');
+  console.log(`Final stats: ${filteredVertices.length} vertices, point size: ${basePointSize}`);
+  
   return points;
 }
 
-function showPointCloudNotice(container, vertexCount) {
+function showPointCloudNotice(container, vertexCount, cleanedCount, removedCount) {
   // Remove any existing notice
   const existingNotice = container.querySelector('.point-cloud-notice');
   if (existingNotice) {
@@ -302,20 +452,26 @@ function showPointCloudNotice(container, vertexCount) {
     position: absolute;
     top: 10px;
     left: 10px;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.9);
     color: #ffd700;
-    padding: 8px 12px;
-    border-radius: 6px;
+    padding: 10px 15px;
+    border-radius: 8px;
     font-size: 12px;
     font-family: monospace;
     z-index: 1000;
     border: 1px solid #ffd700;
-  `;
-  notice.innerHTML = `
-    <i class="fas fa-info-circle"></i>
-    Rendering as point-cloud (${vertexCount.toLocaleString()} vertices)
+    max-width: 300px;
+    line-height: 1.4;
   `;
   
+  let noticeText = `<i class="fas fa-info-circle"></i> Rendering as point-cloud<br>`;
+  noticeText += `<strong>${cleanedCount.toLocaleString()}</strong> vertices displayed`;
+  
+  if (removedCount > 0) {
+    noticeText += `<br><small>Cleaned: ${removedCount.toLocaleString()} invalid/outlier vertices removed</small>`;
+  }
+  
+  notice.innerHTML = noticeText;
   container.appendChild(notice);
   
   // Optionally add point size control for debugging (commented out by default)
@@ -323,7 +479,7 @@ function showPointCloudNotice(container, vertexCount) {
   const sizeControl = document.createElement('div');
   sizeControl.style.cssText = `
     position: absolute;
-    top: 45px;
+    top: 80px;
     left: 10px;
     background: rgba(0, 0, 0, 0.8);
     color: white;
@@ -456,12 +612,22 @@ async function loadModel(modelUrl) {
       
       if (!hasIndices && vertexCount > 0) {
         // Create point cloud for PLY without faces
-        const box = new THREE.Box3().setFromBufferAttribute(geometry.attributes.position);
-        const pointCloud = createPointCloudFromGeometry(geometry, box);
-        modelObject.add(pointCloud);
-        isPointCloud = true;
-        console.log('Rendering PLY as point-cloud (no faces)');
-        showPointCloudNotice(container, vertexCount);
+        try {
+          const box = new THREE.Box3().setFromBufferAttribute(geometry.attributes.position);
+          const pointCloud = createPointCloudFromGeometry(geometry, box);
+          modelObject.add(pointCloud);
+          isPointCloud = true;
+          
+          const cleanedCount = pointCloud.geometry.attributes.position.count;
+          const removedCount = vertexCount - cleanedCount;
+          
+          console.log('Rendering PLY as point-cloud (no faces)');
+          showPointCloudNotice(container, vertexCount, cleanedCount, removedCount);
+          
+        } catch (error) {
+          console.error('Failed to create PLY point cloud:', error);
+          throw new Error(`PLY point cloud creation failed: ${error.message}`);
+        }
       } else if (hasIndices) {
         // Create mesh for PLY with faces
         const material = new THREE.MeshPhongMaterial({
@@ -503,11 +669,12 @@ async function loadModel(modelUrl) {
         // Apply enhanced material with better visibility
         child.material = new THREE.MeshPhongMaterial({
           color: 0xffd700, // Bright gold color
-          specular: 0x444444,
-          shininess: 100,
+          specular: 0x888888, // Increased specular
+          shininess: 80,
           side: THREE.DoubleSide,
           transparent: false,
-          opacity: 1.0
+          opacity: 1.0,
+          emissive: 0x111100 // Slight emissive glow to prevent complete darkness
         });
         
         // Enable shadow casting and receiving
@@ -553,14 +720,29 @@ async function loadModel(modelUrl) {
         }
       });
       
-      // Create point cloud from the first geometry
-      const box = new THREE.Box3().setFromBufferAttribute(firstGeometry.attributes.position);
-      const pointCloud = createPointCloudFromGeometry(firstGeometry, box);
-      modelObject.add(pointCloud);
-      isPointCloud = true;
-      
-      console.log(`Rendering as point-cloud (${vertexCount} vertices)`);
-      showPointCloudNotice(container, vertexCount);
+      // Create point cloud from the first geometry with cleaning
+      try {
+        // We need to create a bounding box from the raw geometry first
+        const tempBox = new THREE.Box3();
+        if (firstGeometry.attributes.position) {
+          tempBox.setFromBufferAttribute(firstGeometry.attributes.position);
+        }
+        
+        const pointCloud = createPointCloudFromGeometry(firstGeometry, tempBox);
+        modelObject.add(pointCloud);
+        isPointCloud = true;
+        
+        // Calculate cleaned vertex counts for display
+        const cleanedCount = pointCloud.geometry.attributes.position.count;
+        const removedCount = vertexCount - cleanedCount;
+        
+        console.log(`Rendering as point-cloud (${cleanedCount} vertices, ${removedCount} removed)`);
+        showPointCloudNotice(container, vertexCount, cleanedCount, removedCount);
+        
+      } catch (error) {
+        console.error('Failed to create point cloud:', error);
+        throw new Error(`Point cloud creation failed: ${error.message}`);
+      }
     }
 
     // Add model to scene
