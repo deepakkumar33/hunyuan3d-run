@@ -575,7 +575,7 @@ async function loadModel(modelUrl) {
     const asset = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error('Model loading timed out'));
-      }, 180000); // Increased to 3 minutes timeout for large files
+      }, 300000); // 5 minutes timeout for large files
 
       loader.load(
         modelUrl, // Use the full URL with cache busting
@@ -588,26 +588,6 @@ async function loadModel(modelUrl) {
           if (progress.total) {
             const percent = (progress.loaded / progress.total * 100).toFixed(1);
             console.log(`Loading progress: ${percent}%`);
-            
-            // Update loading state with progress
-            const loadingDiv = container.querySelector('.viewer-loading');
-            if (loadingDiv) {
-              loadingDiv.innerHTML = `
-                <i class="fas fa-spinner fa-spin" style="font-size: 2em; margin-bottom: 10px;"></i>
-                <p>Loading 3D model...</p>
-                <p style="font-size: 0.9rem; color: #666;">Progress: ${percent}%</p>
-              `;
-            }
-          } else {
-            // Show indeterminate progress
-            const loadingDiv = container.querySelector('.viewer-loading');
-            if (loadingDiv) {
-              loadingDiv.innerHTML = `
-                <i class="fas fa-spinner fa-spin" style="font-size: 2em; margin-bottom: 10px;"></i>
-                <p>Loading 3D model...</p>
-                <p style="font-size: 0.9rem; color: #666;">Processing large file...</p>
-              `;
-            }
           }
         },
         (error) => {
