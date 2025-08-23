@@ -421,223 +421,152 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Load the model with robust retry logic and better error handling
+   * Handle successful conversion completion
    */
-  async function loadModelWithRetry(modelUrl, attempt = 1, maxAttempts = 3) {
-    const baseDelay = 3000; // 3 seconds base delay
-    const maxDelay = 15000; // 15 seconds max delay
+  async function handleConversionComplete(result) {
+    console.log('Conversion completed:', result);
     
-    console.log(`🔄 Loading model attempt ${attempt}/${maxAttempts}: ${modelUrl}`);
+    // Build absolute model URL
+    let modelUrl;
+    if (result.model_url.startsWith('http')) {
+      modelUrl = result.model_url;
+    } else {
+      modelUrl = `http://${HOST}:5000${result.model_url}`;
+    }
+    
+    console.log('Absolute model URL:', modelUrl);
+
+    // Get available export formats
+    let exportFormats = {};
+    if (result.formats) {
+      Object.keys(result.formats).forEach(format => {
+        const formatUrl = result.formats[format];
+        exportFormats[format] = formatUrl.startsWith('http') ? formatUrl : `http://${HOST}:5000${formatUrl}`;
+      });
+      console.log('Available formats from API:', exportFormats);
+    } else {
+      const extension = result.model_url.split('.').pop().toLowerCase();
+      exportFormats[extension] = modelUrl;
+      console.log('Fallback format detection:', extension);
+    }
+
+    if (!exportFormats.obj && !exportFormats.glb && !exportFormats.gltf) {
+      console.warn('No common 3D formats found, using primary model URL');
+      const extension = result.model_url.split('.').pop().toLowerCase();
+      exportFormats[extension] = modelUrl;
+    }
+
+    // Store model data globally
+    currentModelData = {
+      modelUrl: modelUrl,
+      exportFormats: exportFormats,
+      originalResponse: result,
+      jobId: currentJobId
+    };
+
+    console.log('Model data stored:', currentModelData);
+    
+    // Switch to View tab and load model - no delays, just do it
+    tabs[2].click();
+    
+    // Simple load with auto-retry on failure
+    try {
+      await loadModelIntoViewer(modelUrl);
+      console.log('✅ Model loaded successfully');
+      updateProgress(100, 'Model loaded successfully!', 'done');
+      showToast('3D model loaded successfully!', 'success');
+    } catch (err) {
+      console.log('❌ First load failed, trying once more in 2 seconds...');
+      setTimeout(async () => {
+        try {
+          await loadModelIntoViewer(modelUrl);
+          console.log('✅ Model loaded on retry');
+          updateProgress(100, 'Model loaded successfully!', 'done');
+          showToast('3D model loaded successfully!', 'success');
+        } catch (retryErr) {
+          console.error('❌ Retry also failed:', retryErr);
+          showErrorMessage(`Model loading failed: ${retryErr.message}`);
+          showSimpleRetryViewer(modelUrl);
+        }
+      }, 2000);
+    }
+  }
+
+  /**
+   * Load the model into the Three.js viewer
+   */
+  async function loadModelIntoViewer(modelUrl) {
+    console.log('🎮 Loading model into viewer:', modelUrl);
     
     const modelViewer = document.getElementById('model-viewer');
     if (!modelViewer) {
-      console.error('Model viewer element not found');
-      showErrorMessage('Model viewer element not found');
-      return false;
+      throw new Error('Model viewer element not found');
     }
 
-    // Update progress UI to show loading attempts
-    updateProgress(100, `Loading 3D model... (attempt ${attempt}/${maxAttempts})`, 'loading');
-
-    // Show loading state with attempt info
+    // Show loading state
     modelViewer.innerHTML = `
       <div class="viewer-loading">
         <i class="fas fa-spinner fa-spin"></i>
         <p>Loading 3D model...</p>
-        <p class="viewer-info">Attempt ${attempt} of ${maxAttempts}</p>
-        <p class="viewer-info">Large files may take several minutes...</p>
+        <p class="viewer-info">Please wait, large files may take several minutes...</p>
       </div>
     `;
 
-    try {
-      // Step 1: Verify model file accessibility with cache busting
-      const cacheBuster = Date.now() + Math.random().toString(36).substr(2, 9);
-      const checkUrl = `${modelUrl}?_cb=${cacheBuster}`;
-      
-      console.log(`📡 Checking model accessibility (attempt ${attempt}):`, checkUrl);
-      
-      const checkResponse = await fetch(checkUrl, { 
-        method: 'HEAD',
-        signal: AbortSignal.timeout(30000), // 30 second timeout for accessibility check
-        cache: 'no-cache' // Force fresh request
-      });
-      
-      if (!checkResponse.ok) {
-        throw new Error(`Model file not accessible: ${checkResponse.status} ${checkResponse.statusText}`);
-      }
-      
-      // Get file size for validation
-      const contentLength = checkResponse.headers.get('Content-Length');
-      const fileSize = contentLength ? parseInt(contentLength) : 'unknown';
-      
-      console.log(`✅ Model file accessible (attempt ${attempt}), size: ${fileSize} bytes`);
-      
-      // Step 2: Load the model into the viewer
-      console.log(`🎨 Loading model into viewer (attempt ${attempt})...`);
-      
-      const loadSuccess = await loadModelIntoViewer(modelUrl, attempt);
-      
-      if (loadSuccess) {
-        console.log(`✅ Model loaded successfully on attempt ${attempt}`);
-        updateProgress(100, 'Model loaded successfully!', 'done');
-        showToast('3D model loaded successfully!', 'success');
-        
-        // Force refresh of the view tab to ensure model is visible
-        setTimeout(() => {
-          const viewTab = document.querySelector('[href="#view-section"]');
-          if (viewTab) {
-            viewTab.click();
-          }
-        }, 500);
-        
-        return true;
-      } else {
-        throw new Error('Model loading returned false');
-      }
-      
-    } catch (err) {
-      console.error(`❌ Model load attempt ${attempt} failed:`, err);
-      
-      // Check if we should retry
-      if (attempt < maxAttempts) {
-        // Calculate exponential backoff delay
-        const delay = Math.min(baseDelay * Math.pow(1.5, attempt - 1), maxDelay);
-        const jitter = Math.random() * 1000; // Add jitter to prevent thundering herd
-        const totalDelay = delay + jitter;
-        
-        console.log(`⏰ Retrying in ${(totalDelay / 1000).toFixed(1)} seconds...`);
-        
-        // Update UI to show retry countdown
-        updateProgress(100, `Retrying in ${Math.ceil(totalDelay / 1000)}s...`, 'retrying');
-        
-        // Show retry state
-        modelViewer.innerHTML = `
-          <div class="viewer-loading">
-            <i class="fas fa-clock"></i>
-            <p>Retrying model load...</p>
-            <p class="viewer-info">Attempt ${attempt} failed: ${err.message}</p>
-            <p class="viewer-info">Next attempt in ${Math.ceil(totalDelay / 1000)} seconds</p>
-          </div>
-        `;
-        
-        // Wait and retry
-        await new Promise(resolve => setTimeout(resolve, totalDelay));
-        return loadModelWithRetry(modelUrl, attempt + 1, maxAttempts);
-        
-      } else {
-        // Max attempts reached - show error with manual refresh option
-        console.error(`❌ All ${maxAttempts} load attempts failed. Final error:`, err);
-        
-        updateProgress(100, 'Model loading failed - click to retry', 'error');
-        showErrorMessage(`Failed to load 3D model after ${maxAttempts} attempts: ${err.message}`);
-        
-        // Show failure state with auto-refresh option
-        showFailureViewerWithAutoRefresh(err.message, modelUrl);
-        showToast(`Model loading failed - manual retry available`, 'error');
-        
-        return false;
-      }
+    // Try ThreeJSViewer
+    if (window.ThreeJSViewer && typeof window.ThreeJSViewer.loadModel === 'function') {
+      console.log('📞 Using ThreeJSViewer.loadModel');
+      await window.ThreeJSViewer.loadModel(modelUrl);
+      console.log('✅ Model loaded successfully via ThreeJSViewer');
+      return;
     }
-  }
-
-  /**
-   * Load the model into the Three.js viewer with enhanced error handling
-   */
-  async function loadModelIntoViewer(modelUrl, attempt = 1) {
-    console.log(`🎮 Loading model into viewer (attempt ${attempt}):`, modelUrl);
     
-    try {
-      // Call the existing initializeViewer function if it exists
-      if (window.initializeViewer && typeof window.initializeViewer === 'function') {
-        console.log('📞 Calling existing initializeViewer function');
-        await window.initializeViewer(modelUrl);
-        console.log('✅ Model loaded successfully via initializeViewer');
-        return true;
-      }
-      
-      // Fallback: try ThreeJSViewer if initializeViewer is not available
-      if (window.ThreeJSViewer && typeof window.ThreeJSViewer.loadModel === 'function') {
-        console.log('📞 Using ThreeJSViewer.loadModel');
-        await window.ThreeJSViewer.loadModel(modelUrl);
-        console.log('✅ Model loaded successfully via ThreeJSViewer');
-        return true;
-      }
-      
-      // If neither method is available, show fallback
-      console.warn('⚠️ No 3D viewer functions available');
-      showFallbackViewer('3D viewer functions not available');
-      return true; // Consider this a "success" since it's not a loading error
-      
-    } catch(err) {
-      console.error(`❌ Model viewer loading failed (attempt ${attempt}):`, err);
-      
-      // Check for specific timeout errors
-      if (err.message && err.message.includes('timed out')) {
-        throw new Error(`Viewer timeout (attempt ${attempt})`);
-      } else if (err.message && err.message.includes('Model loading timed out')) {
-        throw new Error(`Model loading timeout (attempt ${attempt})`);
-      } else {
-        throw new Error(`Viewer error (attempt ${attempt}): ${err.message}`);
-      }
+    // Try initializeViewer
+    if (window.initializeViewer && typeof window.initializeViewer === 'function') {
+      console.log('📞 Calling initializeViewer function');
+      await window.initializeViewer(modelUrl);
+      console.log('✅ Model loaded successfully via initializeViewer');
+      return;
     }
+    
+    // If neither method is available
+    console.warn('⚠️ No 3D viewer functions available');
+    showFallbackViewer('3D viewer functions not available');
   }
 
   /**
-   * Show failure state with auto-refresh and manual retry options
+   * Show simple retry viewer
    */
-  function showFailureViewerWithAutoRefresh(errorMessage, modelUrl) {
+  function showSimpleRetryViewer(modelUrl) {
     const modelViewer = document.getElementById('model-viewer');
     if (!modelViewer) return;
     
     modelViewer.innerHTML = `
       <div class="viewer-error">
         <i class="fas fa-exclamation-triangle"></i>
-        <p>Failed to load 3D model</p>
-        <p class="viewer-info">${errorMessage}</p>
+        <p>3D model loading timed out</p>
+        <p class="viewer-info">The model was generated successfully but took too long to load in the viewer.</p>
         <div style="margin-top: 1rem;">
-          <button class="btn btn-primary" onclick="window.retryModelLoad('${modelUrl}')" style="margin-right: 0.5rem;">
-            <i class="fas fa-retry"></i> Retry Loading
-          </button>
-          <button class="btn btn-primary" onclick="window.forceRefreshViewer()" style="margin-right: 0.5rem;">
-            <i class="fas fa-refresh"></i> Refresh Viewer
+          <button class="btn btn-primary" onclick="window.simpleRetry('${modelUrl}')" style="margin-right: 0.5rem;">
+            <i class="fas fa-refresh"></i> Try Again
           </button>
           <button onclick="document.querySelector('[href=\\'#export-section\\']').click()" class="btn btn-secondary">
-            <i class="fas fa-download"></i>
-            Skip to Export
+            <i class="fas fa-download"></i> Go to Export
           </button>
         </div>
-        <p class="viewer-info" style="margin-top: 1rem; font-size: 0.8rem;">
-          If the model was generated successfully, try refreshing the viewer or check the export section.
-        </p>
       </div>
     `;
   }
 
-  // Make retry and refresh functions globally available
-  window.retryModelLoad = function(modelUrl) {
-    console.log('🔄 Manual retry requested for:', modelUrl);
-    loadModelWithRetry(modelUrl, 1, 3); // Fewer attempts for manual retry
-  };
-
-  window.forceRefreshViewer = function() {
-    console.log('🔄 Force refresh viewer requested');
-    if (currentModelData && currentModelData.modelUrl) {
-      // Clear any existing model state
-      if (window.ThreeJSViewer && window.ThreeJSViewer.initThreeJSViewer) {
-        // Reinitialize the entire viewer
-        window.ThreeJSViewer.initThreeJSViewer().then(() => {
-          // Load the model after viewer is ready
-          return loadModelWithRetry(currentModelData.modelUrl, 1, 2);
-        }).catch(err => {
-          console.error('Viewer reinitialization failed:', err);
-          showToast('Viewer refresh failed', 'error');
-        });
-      } else {
-        // Just try to reload the model
-        loadModelWithRetry(currentModelData.modelUrl, 1, 2);
-      }
-    } else {
-      showToast('No model data available for refresh', 'error');
+  // Simple retry function
+  window.simpleRetry = async function(modelUrl) {
+    console.log('🔄 Simple retry requested');
+    try {
+      await loadModelIntoViewer(modelUrl);
+      updateProgress(100, 'Model loaded successfully!', 'done');
+      showToast('3D model loaded successfully!', 'success');
+    } catch (err) {
+      console.error('❌ Retry failed:', err);
+      showToast('Loading still failed - try export instead', 'error');
     }
   };
 
@@ -715,8 +644,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Use the new loadModelWithRetry function for robustness
-    return await loadModelWithRetry(currentModelData.modelUrl);
+    // Use simple load function
+    await loadModelIntoViewer(currentModelData.modelUrl);
   }
 
   function showFallbackViewer(message = '3D viewer is not available') {
