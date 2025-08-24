@@ -88,4 +88,4 @@ def serve_output(job_id, filename):
 if __name__ == '__main__':
     logger.info("Registered routes:\n%s", app.url_map)
     logger.info("🚀 Starting Flask on 0.0.0.0:5000")
-    app.run(debug=True, host='0.0.0.0', port=3000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
