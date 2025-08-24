@@ -508,16 +508,26 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="viewer-loading">
         <i class="fas fa-spinner fa-spin"></i>
         <p>Loading 3D model...</p>
-        <p class="viewer-info">Please wait, large files may take several minutes...</p>
+        <p class="viewer-info">This may take up to 10 minutes for large files...</p>
       </div>
     `;
 
-    // Try ThreeJSViewer
+    // Try ThreeJSViewer with longer timeout
     if (window.ThreeJSViewer && typeof window.ThreeJSViewer.loadModel === 'function') {
       console.log('📞 Using ThreeJSViewer.loadModel');
-      await window.ThreeJSViewer.loadModel(modelUrl);
-      console.log('✅ Model loaded successfully via ThreeJSViewer');
-      return;
+      
+      // Set a longer timeout for the viewer
+      const originalTimeout = window.ThreeJSViewer.timeout || 60000;
+      window.ThreeJSViewer.timeout = 600000; // 10 minutes
+      
+      try {
+        await window.ThreeJSViewer.loadModel(modelUrl);
+        console.log('✅ Model loaded successfully via ThreeJSViewer');
+        return;
+      } finally {
+        // Restore original timeout
+        window.ThreeJSViewer.timeout = originalTimeout;
+      }
     }
     
     // Try initializeViewer
