@@ -544,7 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Show simple retry viewer with viewer-only reload
+   * Show simple retry viewer
    */
   function showSimpleRetryViewer(modelUrl) {
     const modelViewer = document.getElementById('model-viewer');
@@ -556,24 +556,18 @@ document.addEventListener('DOMContentLoaded', () => {
         <p>3D model loading timed out</p>
         <p class="viewer-info">The model was generated successfully but took too long to load in the viewer.</p>
         <div style="margin-top: 1rem;">
-          <button class="btn btn-primary" onclick="window.reloadViewerOnly('${modelUrl}')" style="margin-right: 0.5rem;">
-            <i class="fas fa-refresh"></i> Reload Viewer Only
-          </button>
           <button class="btn btn-primary" onclick="window.simpleRetry('${modelUrl}')" style="margin-right: 0.5rem;">
-            <i class="fas fa-redo"></i> Try Again
+            <i class="fas fa-refresh"></i> Try Again
           </button>
           <button onclick="document.querySelector('[href=\\'#export-section\\']').click()" class="btn btn-secondary">
             <i class="fas fa-download"></i> Go to Export
           </button>
         </div>
-        <p class="viewer-info" style="margin-top: 0.5rem; font-size: 0.8rem;">
-          "Reload Viewer Only" resets just the 3D viewer without losing your progress.
-        </p>
       </div>
     `;
   }
 
-  // Enhanced retry functions
+  // Simple retry function
   window.simpleRetry = async function(modelUrl) {
     console.log('🔄 Simple retry requested');
     try {
@@ -582,62 +576,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('3D model loaded successfully!', 'success');
     } catch (err) {
       console.error('❌ Retry failed:', err);
-      showToast('Loading still failed - try "Reload Viewer Only"', 'error');
-    }
-  };
-
-  // New function: Reload only the 3D viewer without losing progress
-  window.reloadViewerOnly = async function(modelUrl) {
-    console.log('🔄 Reloading viewer only (not full page)');
-    
-    const modelViewer = document.getElementById('model-viewer');
-    if (!modelViewer) {
-      showToast('Model viewer not found', 'error');
-      return;
-    }
-    
-    try {
-      // Show reloading state
-      modelViewer.innerHTML = `
-        <div class="viewer-loading">
-          <i class="fas fa-sync-alt fa-spin"></i>
-          <p>Reloading 3D viewer...</p>
-          <p class="viewer-info">Resetting viewer without losing your progress</p>
-        </div>
-      `;
-      
-      // Clear any existing Three.js state
-      if (window.ThreeJSViewer) {
-        // Reset Three.js viewer variables
-        if (window.ThreeJSViewer.scene) {
-          // Clear the scene
-          while(window.ThreeJSViewer.scene.children.length > 0) {
-            window.ThreeJSViewer.scene.remove(window.ThreeJSViewer.scene.children[0]);
-          }
-        }
-        
-        // Reinitialize the entire viewer
-        console.log('🔄 Reinitializing Three.js viewer...');
-        await window.ThreeJSViewer.initThreeJSViewer();
-        
-        // Wait a moment for initialization
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Load the model
-        console.log('🎮 Loading model into fresh viewer...');
-        await window.ThreeJSViewer.loadModel(modelUrl);
-        
-        updateProgress(100, 'Model loaded successfully!', 'done');
-        showToast('3D viewer reloaded successfully!', 'success');
-        
-      } else {
-        throw new Error('ThreeJSViewer not available');
-      }
-      
-    } catch (err) {
-      console.error('❌ Viewer reload failed:', err);
-      showToast('Viewer reload failed - model files are still available for export', 'error');
-      showSimpleRetryViewer(modelUrl);
+      showToast('Loading still failed - try export instead', 'error');
     }
   };
 
