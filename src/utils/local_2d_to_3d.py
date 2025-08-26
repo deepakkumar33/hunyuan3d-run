@@ -9,7 +9,8 @@ import torch
 import yaml
 from PIL import Image
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Tuple
+import time
 
 # Set CUDA memory allocation configuration before any CUDA operations
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -98,6 +99,132 @@ except ImportError as e:
     error_msg += f"4. Current working directory: {os.getcwd()}\n"
     
     raise ImportError(error_msg)
+
+
+def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """Clean mesh data by removing NaN/inf values and outer shells"""
+    
+    # Remove NaN and inf values from vertices
+    if np.any(np.isnan(vertices)) or np.any(np.isinf(vertices)):
+        logging.warning("Found NaN/inf values in vertices, cleaning...")
+        valid_mask = ~(np.isnan(vertices).any(axis=1) | np.isinf(vertices).any(axis=1))
+        vertices = vertices[valid_mask]
+        logging.info(f"Removed {np.sum(~valid_mask)} invalid vertices")
+    
+    if faces is not None:
+        # Remove faces that reference invalid vertices
+        max_vertex_idx = len(vertices) - 1
+        valid_faces_mask = np.all(faces <= max_vertex_idx, axis=1)
+        faces = faces[valid_faces_mask]
+        logging.info(f"Kept {len(faces)} valid faces out of original set")
+    
+    # Remove outlier vertices (potential outer shell)
+    if len(vertices) > 100:  # Only do this for larger point clouds
+        # Calculate distances from centroid
+        centroid = np.mean(vertices, axis=0)
+        distances = np.linalg.norm(vertices - centroid, axis=1)
+        
+        # Use IQR method to remove outliers
+        Q1 = np.percentile(distances, 25)
+        Q3 = np.percentile(distances, 75)
+        IQR = Q3 - Q1
+        
+        # More conservative outlier removal (only remove extreme outliers)
+        outlier_threshold = Q3 + 2.5 * IQR  # Increased from 1.5 to 2.5
+        inlier_mask = distances <= outlier_threshold
+        
+        removed_count = np.sum(~inlier_mask)
+        if removed_count > 0:
+            logging.info(f"Removing {removed_count} outlier vertices (potential outer shell)")
+            vertices = vertices[inlier_mask]
+            
+            if faces is not None:
+                # Update faces to account for removed vertices
+                vertex_mapping = np.full(len(inlier_mask), -1)
+                vertex_mapping[inlier_mask] = np.arange(np.sum(inlier_mask))
+                
+                # Keep only faces where all vertices are still valid
+                valid_faces = []
+                for face in faces:
+                    mapped_face = vertex_mapping[face]
+                    if np.all(mapped_face >= 0):
+                        valid_faces.append(mapped_face)
+                
+                if valid_faces:
+                    faces = np.array(valid_faces)
+                else:
+                    faces = None
+                    logging.warning("No valid faces remaining after outlier removal")
+    
+    return vertices, faces
+
+
+def ensure_valid_mesh(vertices: np.ndarray, faces: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """Ensure mesh data is valid and well-formed"""
+    
+    # Clean the mesh first
+    vertices, faces = clean_mesh_data(vertices, faces)
+    
+    if len(vertices) == 0:
+        raise ValueError("No valid vertices remaining after cleaning")
+    
+    # Validate vertex data
+    if vertices.shape[1] < 3:
+        raise ValueError(f"Vertices must have at least 3 coordinates, got shape {vertices.shape}")
+    
+    # Take only first 3 coordinates if more are present
+    if vertices.shape[1] > 3:
+        vertices = vertices[:, :3]
+    
+    # Ensure data types are correct
+    vertices = vertices.astype(np.float32)
+    
+    if faces is not None:
+        faces = faces.astype(np.int32)
+        
+        # Validate faces
+        if len(faces) > 0:
+            if faces.shape[1] != 3:
+                logging.warning(f"Expected triangular faces, got shape {faces.shape}")
+                if faces.shape[1] > 3:
+                    # Convert quads to triangles if needed
+                    if faces.shape[1] == 4:
+                        triangulated_faces = []
+                        for face in faces:
+                            # Split quad into two triangles
+                            triangulated_faces.append([face[0], face[1], face[2]])
+                            triangulated_faces.append([face[0], face[2], face[3]])
+                        faces = np.array(triangulated_faces)
+                        logging.info(f"Converted quads to {len(faces)} triangular faces")
+            
+            # Ensure face indices are within bounds
+            max_vertex_idx = len(vertices) - 1
+            if np.any(faces > max_vertex_idx):
+                logging.error(f"Face indices exceed vertex count. Max face index: {np.max(faces)}, vertex count: {len(vertices)}")
+                valid_faces_mask = np.all(faces <= max_vertex_idx, axis=1)
+                faces = faces[valid_faces_mask]
+                logging.info(f"Kept {len(faces)} valid faces")
+                
+                if len(faces) == 0:
+                    faces = None
+                    logging.warning("No valid faces remaining")
+    
+    # Normalize vertices to reasonable scale
+    vertex_range = np.max(vertices, axis=0) - np.min(vertices, axis=0)
+    max_range = np.max(vertex_range)
+    
+    if max_range > 10.0 or max_range < 0.1:
+        scale_factor = 2.0 / max_range  # Scale to fit in [-1, 1] range with some padding
+        vertices = vertices * scale_factor
+        logging.info(f"Scaled vertices by factor {scale_factor:.4f}")
+    
+    # Center the mesh
+    centroid = np.mean(vertices, axis=0)
+    vertices = vertices - centroid
+    logging.info(f"Centered mesh (centroid was at {centroid})")
+    
+    return vertices, faces
+
 
 class Local2DTo3DConverter:
     def __init__(self, logger: logging.Logger, output_dir: str):
@@ -410,11 +537,14 @@ class Local2DTo3DConverter:
         
         return image_batch
     
-    def _generate_3d_mesh(self, image_batch: torch.Tensor) -> np.ndarray:
-        """Generate 3D mesh from preprocessed images"""
+    def _generate_3d_mesh(self, image_batch: torch.Tensor, progress_callback=None) -> np.ndarray:
+        """Generate 3D mesh from preprocessed images with progress updates"""
         try:
             with torch.no_grad():
                 self.logger.info("🔄 Running Hunyuan3D inference...")
+                
+                if progress_callback:
+                    progress_callback(10, "Starting inference...")
                 
                 # Clear cache before inference
                 if torch.cuda.is_available():
@@ -481,13 +611,23 @@ class Local2DTo3DConverter:
                         self.logger.warning(f"Failed to convert tensor to PIL: {e}, trying direct tensor input")
                         pipeline_input = image_batch
                 
-                # Run the pipeline to generate 3D representation
+                if progress_callback:
+                    progress_callback(30, "Running inference...")
+                
+                # Run the pipeline with optimized settings for better quality
+                start_time = time.time()
                 result = self.pipeline(
                     pipeline_input,
-                    num_inference_steps=50,  # Adjust based on quality/speed requirements
-                    guidance_scale=7.5,      # Adjust for better results
+                    num_inference_steps=30,  # Reduced from 50 for faster inference
+                    guidance_scale=6.0,      # Slightly reduced for more stable results
                     return_dict=True
                 )
+                
+                inference_time = time.time() - start_time
+                self.logger.info(f"✅ Inference completed in {inference_time:.2f} seconds")
+                
+                if progress_callback:
+                    progress_callback(70, "Processing results...")
                 
                 # Clear cache after inference
                 if torch.cuda.is_available():
@@ -495,7 +635,9 @@ class Local2DTo3DConverter:
                     memory_after = torch.cuda.memory_allocated(0) / (1024**3)
                     self.logger.info(f"GPU memory after inference: {memory_after:.2f}GB")
                 
-                # Extract point cloud or mesh data
+                # Extract point cloud or mesh data with better error handling
+                point_cloud = None
+                
                 if hasattr(result, 'point_clouds') and result.point_clouds is not None:
                     self.logger.info("✅ Using point_clouds from pipeline result")
                     point_clouds = result.point_clouds
@@ -528,8 +670,13 @@ class Local2DTo3DConverter:
                     else:
                         mesh = meshes
                     
-                    # If it's already a mesh object, return it directly
-                    return mesh
+                    # Extract vertices from mesh object
+                    if hasattr(mesh, 'vertices'):
+                        point_cloud = np.array(mesh.vertices)
+                    elif hasattr(mesh, 'verts_packed'):
+                        point_cloud = mesh.verts_packed().cpu().numpy()
+                    else:
+                        point_cloud = mesh  # Assume it's already vertex data
                     
                 else:
                     # Fallback: extract from latents using VAE
@@ -546,7 +693,6 @@ class Local2DTo3DConverter:
                             self.logger.info(f"Decoded is a list with {len(decoded)} items")
                             
                             # Try to find the best item in the list
-                            point_cloud = None
                             for i, item in enumerate(decoded):
                                 self.logger.info(f"List item {i}: type={type(item)}")
                                 
@@ -607,11 +753,30 @@ class Local2DTo3DConverter:
                         else:
                             raise RuntimeError(f"Unexpected decoded type: {type(decoded)}")
                 
-                self.logger.info(f"✅ 3D inference completed, point cloud shape: {point_cloud.shape}")
-                return point_cloud
+                if point_cloud is None:
+                    raise RuntimeError("Failed to extract point cloud from pipeline result")
+                
+                if progress_callback:
+                    progress_callback(90, "Cleaning mesh data...")
+                
+                # Clean and validate the point cloud
+                if len(point_cloud.shape) == 2 and point_cloud.shape[1] >= 3:
+                    # Ensure we have valid mesh data
+                    vertices, _ = ensure_valid_mesh(point_cloud)
+                    self.logger.info(f"✅ Cleaned point cloud: {len(vertices)} vertices")
+                else:
+                    raise ValueError(f"Invalid point cloud shape: {point_cloud.shape}")
+                
+                if progress_callback:
+                    progress_callback(100, "Complete!")
+                
+                self.logger.info(f"✅ 3D inference completed, final point cloud shape: {vertices.shape}")
+                return vertices
                 
         except Exception as e:
             self.logger.error(f"3D generation failed: {traceback.format_exc()}")
+            if progress_callback:
+                progress_callback(-1, f"Error: {str(e)}")
             raise RuntimeError(f"3D generation failed: {e}")
     
     def _save_mesh_outputs(self, mesh_data: np.ndarray, job_output_dir: str) -> dict:
@@ -622,12 +787,17 @@ class Local2DTo3DConverter:
         base_name = "generated_model"
         
         try:
+            # Ensure mesh data is valid
+            vertices, faces = ensure_valid_mesh(mesh_data)
+            
             # Convert point cloud to mesh if needed
-            if mesh_data.shape[-1] == 3:  # Point cloud format
-                vertices, faces = point_cloud_to_mesh(mesh_data)
-            else:
-                vertices = mesh_data[:, :3]  # Assume first 3 columns are XYZ
-                faces = None
+            if faces is None and len(vertices) > 100:
+                try:
+                    vertices, faces = point_cloud_to_mesh(vertices)
+                    self.logger.info(f"✅ Generated mesh with {len(faces)} faces from point cloud")
+                except Exception as e:
+                    self.logger.warning(f"Failed to generate faces from point cloud: {e}")
+                    faces = None
             
             # Save OBJ format (primary format)
             obj_path = os.path.join(job_output_dir, f"{base_name}.obj")
@@ -641,13 +811,15 @@ class Local2DTo3DConverter:
             output_files['ply'] = ply_path
             self.logger.info(f"✅ PLY saved: {ply_path}")
             
-            # Try to save STL if possible
+            # Try to save STL if we have faces
             try:
-                if faces is not None:
+                if faces is not None and len(faces) > 0:
                     stl_path = os.path.join(job_output_dir, f"{base_name}.stl")
                     self._save_stl(stl_path, vertices, faces)
                     output_files['stl'] = stl_path
                     self.logger.info(f"✅ STL saved: {stl_path}")
+                else:
+                    self.logger.info("⚠️ Skipping STL export: no faces available")
             except Exception as e:
                 self.logger.warning(f"STL export failed: {e}")
             
@@ -671,9 +843,16 @@ class Local2DTo3DConverter:
                     # Get triangle vertices
                     v1, v2, v3 = vertices[face]
                     
-                    # Calculate normal
-                    normal = np.cross(v2 - v1, v3 - v1)
-                    normal = normal / np.linalg.norm(normal)
+                    # Calculate normal (ensure it's not zero)
+                    edge1 = v2 - v1
+                    edge2 = v3 - v1
+                    normal = np.cross(edge1, edge2)
+                    norm_length = np.linalg.norm(normal)
+                    
+                    if norm_length > 1e-8:  # Avoid division by zero
+                        normal = normal / norm_length
+                    else:
+                        normal = np.array([0.0, 0.0, 1.0])  # Default normal
                     
                     # Write normal and vertices
                     f.write(struct.pack('<3f', *normal))
@@ -685,13 +864,14 @@ class Local2DTo3DConverter:
         except Exception as e:
             raise RuntimeError(f"STL export failed: {e}")
     
-    def convert(self, images: List[str], job_output_dir: str) -> str:
+    def convert(self, images: List[str], job_output_dir: str, progress_callback=None) -> str:
         """
         Convert images to 3D model using real Hunyuan3D inference
         
         Args:
             images: List of image file paths
             job_output_dir: Directory to save output files
+            progress_callback: Function to call with progress updates (progress, message)
             
         Returns:
             Path to the primary OBJ file
@@ -705,6 +885,9 @@ class Local2DTo3DConverter:
         self.logger.info(f"🚀 Starting 3D conversion with {len(images)} image(s)")
         
         try:
+            if progress_callback:
+                progress_callback(5, "Initializing...")
+            
             # Check GPU memory
             if torch.cuda.is_available():
                 gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
@@ -715,13 +898,19 @@ class Local2DTo3DConverter:
                 # Clear cache before conversion
                 torch.cuda.empty_cache()
             
+            if progress_callback:
+                progress_callback(10, "Preprocessing images...")
+            
             # Preprocess images
             self.logger.info("🔄 Preprocessing images...")
             image_batch = self._preprocess_images(images)
             
-            # Generate 3D mesh
+            # Generate 3D mesh with progress updates
             self.logger.info("🔄 Generating 3D mesh with Hunyuan3D...")
-            mesh_data = self._generate_3d_mesh(image_batch)
+            mesh_data = self._generate_3d_mesh(image_batch, progress_callback)
+            
+            if progress_callback:
+                progress_callback(95, "Saving outputs...")
             
             # Save outputs
             self.logger.info("🔄 Saving 3D model files...")
@@ -731,6 +920,9 @@ class Local2DTo3DConverter:
             primary_output = output_files.get('obj')
             if not primary_output or not os.path.exists(primary_output):
                 raise RuntimeError("Primary OBJ file was not created successfully")
+            
+            if progress_callback:
+                progress_callback(100, "Complete!")
             
             self.logger.info(f"✅ 3D conversion completed successfully: {primary_output}")
             self.logger.info(f"📁 Available formats: {list(output_files.keys())}")
@@ -745,6 +937,8 @@ class Local2DTo3DConverter:
             
         except Exception as e:
             self.logger.error(f"Conversion failed: {traceback.format_exc()}")
+            if progress_callback:
+                progress_callback(-1, f"Error: {str(e)}")
             # Clean up on error
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
