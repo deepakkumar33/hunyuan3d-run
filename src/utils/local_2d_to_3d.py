@@ -102,7 +102,7 @@ except ImportError as e:
 
 
 def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Clean mesh data by removing NaN/inf values and outer shells"""
+    """Clean mesh data by removing NaN/inf values and aggressively removing outer shells"""
     
     # Remove NaN and inf values from vertices
     if np.any(np.isnan(vertices)) or np.any(np.isinf(vertices)):
@@ -118,30 +118,37 @@ def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) ->
         faces = faces[valid_faces_mask]
         logging.info(f"Kept {len(faces)} valid faces out of original set")
     
-    # Remove outlier vertices (potential outer shell)
-    if len(vertices) > 100:  # Only do this for larger point clouds
-        # Calculate distances from centroid
+    # AGGRESSIVE outer shell removal for ring structures
+    if len(vertices) > 500:  # Process larger point clouds
         centroid = np.mean(vertices, axis=0)
         distances = np.linalg.norm(vertices - centroid, axis=1)
         
-        # Use IQR method to remove outliers
-        Q1 = np.percentile(distances, 25)
-        Q3 = np.percentile(distances, 75)
+        # Much more aggressive outlier removal for ring structures
+        Q1 = np.percentile(distances, 10)  # Use 10th percentile instead of 25th
+        Q3 = np.percentile(distances, 90)  # Use 90th percentile instead of 75th
         IQR = Q3 - Q1
         
-        # More conservative outlier removal (only remove extreme outliers)
-        outlier_threshold = Q3 + 2.5 * IQR  # Increased from 1.5 to 2.5
+        # Very aggressive threshold - remove anything beyond Q3 + 0.5*IQR
+        outlier_threshold = Q3 + 0.5 * IQR  # Much more aggressive than 2.5
         inlier_mask = distances <= outlier_threshold
         
-        removed_count = np.sum(~inlier_mask)
+        # Additional filter: remove vertices that are too far from ring center
+        ring_radius = np.median(distances)  # Estimate ring radius
+        max_ring_distance = ring_radius * 1.3  # Allow 30% variance from median
+        ring_mask = distances <= max_ring_distance
+        
+        # Combine both filters
+        final_mask = inlier_mask & ring_mask
+        
+        removed_count = np.sum(~final_mask)
         if removed_count > 0:
-            logging.info(f"Removing {removed_count} outlier vertices (potential outer shell)")
-            vertices = vertices[inlier_mask]
+            logging.info(f"AGGRESSIVE CLEANING: Removing {removed_count} outlier/shell vertices (kept {np.sum(final_mask)})")
+            vertices = vertices[final_mask]
             
             if faces is not None:
                 # Update faces to account for removed vertices
-                vertex_mapping = np.full(len(inlier_mask), -1)
-                vertex_mapping[inlier_mask] = np.arange(np.sum(inlier_mask))
+                vertex_mapping = np.full(len(final_mask), -1)
+                vertex_mapping[final_mask] = np.arange(np.sum(final_mask))
                 
                 # Keep only faces where all vertices are still valid
                 valid_faces = []
@@ -154,7 +161,7 @@ def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) ->
                     faces = np.array(valid_faces)
                 else:
                     faces = None
-                    logging.warning("No valid faces remaining after outlier removal")
+                    logging.warning("No valid faces remaining after aggressive cleaning")
     
     return vertices, faces
 
@@ -830,39 +837,107 @@ class Local2DTo3DConverter:
             raise RuntimeError(f"Failed to save mesh: {e}")
     
     def _save_stl(self, path: str, vertices: np.ndarray, faces: np.ndarray):
-        """Save mesh as STL format"""
+        """Save mesh as STL format with proper validation"""
+        if faces is None or len(faces) == 0:
+            raise RuntimeError("Cannot save STL: no faces available")
+            
         try:
             import struct
             
+            # Validate input data
+            if not isinstance(vertices, np.ndarray) or vertices.shape[1] != 3:
+                raise ValueError("Vertices must be Nx3 numpy array")
+            if not isinstance(faces, np.ndarray) or faces.shape[1] != 3:
+                raise ValueError("Faces must be Nx3 numpy array")
+            
             with open(path, 'wb') as f:
-                # STL header
-                f.write(b'\x00' * 80)
+                # STL header (80 bytes)
+                header = b'Binary STL created by Hunyuan3D converter' + b'\x00' * (80 - 40)
+                f.write(header)
+                
+                # Number of triangles
                 f.write(struct.pack('<I', len(faces)))
                 
                 for face in faces:
+                    # Validate face indices
+                    if np.any(face >= len(vertices)) or np.any(face < 0):
+                        continue  # Skip invalid faces
+                    
                     # Get triangle vertices
-                    v1, v2, v3 = vertices[face]
-                    
-                    # Calculate normal (ensure it's not zero)
-                    edge1 = v2 - v1
-                    edge2 = v3 - v1
-                    normal = np.cross(edge1, edge2)
-                    norm_length = np.linalg.norm(normal)
-                    
-                    if norm_length > 1e-8:  # Avoid division by zero
-                        normal = normal / norm_length
-                    else:
-                        normal = np.array([0.0, 0.0, 1.0])  # Default normal
-                    
-                    # Write normal and vertices
-                    f.write(struct.pack('<3f', *normal))
-                    f.write(struct.pack('<3f', *v1))
-                    f.write(struct.pack('<3f', *v2))
-                    f.write(struct.pack('<3f', *v3))
-                    f.write(b'\x00\x00')  # Attribute byte count
-                    
+                    try:
+                        v1, v2, v3 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
+                        
+                        # Validate vertices are finite
+                        if not (np.all(np.isfinite(v1)) and np.all(np.isfinite(v2)) and np.all(np.isfinite(v3))):
+                            continue
+                        
+                        # Calculate normal (ensure it's not zero)
+                        edge1 = v2 - v1
+                        edge2 = v3 - v1
+                        normal = np.cross(edge1, edge2)
+                        norm_length = np.linalg.norm(normal)
+                        
+                        if norm_length > 1e-8:  # Avoid division by zero
+                            normal = normal / norm_length
+                        else:
+                            normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)  # Default normal
+                        
+                        # Write normal and vertices (ensure float32)
+                        f.write(struct.pack('<3f', float(normal[0]), float(normal[1]), float(normal[2])))
+                        f.write(struct.pack('<3f', float(v1[0]), float(v1[1]), float(v1[2])))
+                        f.write(struct.pack('<3f', float(v2[0]), float(v2[1]), float(v2[2])))
+                        f.write(struct.pack('<3f', float(v3[0]), float(v3[1]), float(v3[2])))
+                        f.write(b'\x00\x00')  # Attribute byte count
+                        
+                    except (IndexError, ValueError) as e:
+                        self.logger.warning(f"Skipping invalid triangle: {e}")
+                        continue
+                        
         except Exception as e:
             raise RuntimeError(f"STL export failed: {e}")
+
+    def _save_obj_fixed(self, path: str, vertices: np.ndarray, faces: Optional[np.ndarray] = None):
+        """Save OBJ with proper formatting and validation"""
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                # Write header
+                f.write("# OBJ file created by Hunyuan3D converter\n")
+                f.write(f"# Vertices: {len(vertices)}\n")
+                if faces is not None:
+                    f.write(f"# Faces: {len(faces)}\n")
+                f.write("\n")
+                
+                # Write vertices with validation
+                valid_vertex_count = 0
+                for i, vertex in enumerate(vertices):
+                    if len(vertex) >= 3 and np.all(np.isfinite(vertex[:3])):
+                        f.write(f"v {vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f}\n")
+                        valid_vertex_count += 1
+                    else:
+                        self.logger.warning(f"Skipping invalid vertex {i}: {vertex}")
+                
+                f.write("\n")
+                
+                # Write faces if available
+                if faces is not None and len(faces) > 0:
+                    valid_face_count = 0
+                    for i, face in enumerate(faces):
+                        # Validate face indices (OBJ uses 1-based indexing)
+                        if (len(face) >= 3 and 
+                            np.all(face >= 0) and 
+                            np.all(face < valid_vertex_count)):
+                            # Convert to 1-based indexing
+                            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+                            valid_face_count += 1
+                        else:
+                            self.logger.warning(f"Skipping invalid face {i}: {face}")
+                    
+                    self.logger.info(f"Saved {valid_vertex_count} vertices and {valid_face_count} faces to OBJ")
+                else:
+                    self.logger.info(f"Saved {valid_vertex_count} vertices (point cloud) to OBJ")
+                    
+        except Exception as e:
+            raise RuntimeError(f"OBJ export failed: {e}")
     
     def convert(self, images: List[str], job_output_dir: str, progress_callback=None) -> str:
         """
