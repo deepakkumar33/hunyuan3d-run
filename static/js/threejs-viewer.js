@@ -30,7 +30,7 @@ async function initThreeJSViewer() {
 
   // Create scene
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf5f5f5); // Light gray background for better contrast
+  scene.background = new THREE.Color(0x1e3a8a); // Deep blue background for better contrast with gold
 
   // Create camera with better FOV for small objects
   camera = new THREE.PerspectiveCamera(
@@ -62,9 +62,9 @@ async function initThreeJSViewer() {
   // Optimized lighting setup for jewelry viewing
   setupLighting();
 
-  // Add subtle grid helper
-  const gridHelper = new THREE.GridHelper(2, 20, 0xcccccc, 0xcccccc);
-  gridHelper.material.opacity = 0.2;
+  // Add subtle grid helper with blue theme
+  const gridHelper = new THREE.GridHelper(2, 20, 0x3b82f6, 0x1e40af);
+  gridHelper.material.opacity = 0.3;
   gridHelper.material.transparent = true;
   scene.add(gridHelper);
 
@@ -479,14 +479,15 @@ async function loadModel(modelUrl) {
         const vertexCount = finalGeometry.attributes.position.count;
         
         if (hasIndices && finalGeometry.index.count >= 3) {
-          // Create mesh with faces
+          // Create mesh with faces - bright gold material for rings
           const material = new THREE.MeshPhongMaterial({
-            color: 0xffd700,
+            color: 0xffd700,  // Bright gold
             side: THREE.DoubleSide,
             transparent: false,
             opacity: 1.0,
-            shininess: 50,
-            specular: 0x222222
+            shininess: 100,   // High shine for jewelry
+            specular: 0xffffff, // White specular highlights
+            emissive: 0x111100  // Slight gold glow
           });
           
           const mesh = new THREE.Mesh(finalGeometry, material);
@@ -494,13 +495,13 @@ async function loadModel(modelUrl) {
           mesh.receiveShadow = true;
           modelObject.add(mesh);
           
-          console.log(`Created mesh with ${vertexCount} vertices and ${finalGeometry.index.count / 3} faces`);
+          console.log(`Created gold ring mesh with ${vertexCount} vertices and ${finalGeometry.index.count / 3} faces`);
         } else {
-          // Create point cloud
+          // Create point cloud - optimized for ring structures
           const pointMaterial = new THREE.PointsMaterial({
-            size: 0.02,
+            size: 0.01, // Smaller points for ring detail
             sizeAttenuation: true,
-            color: 0xffd700,
+            color: 0xffd700, // Gold color
             transparent: false,
             opacity: 1.0,
             vertexColors: finalGeometry.attributes.color ? true : false
@@ -510,7 +511,7 @@ async function loadModel(modelUrl) {
           modelObject.add(points);
           isPointCloud = true;
           
-          console.log(`Created point cloud with ${vertexCount} points`);
+          console.log(`Created gold ring point cloud with ${vertexCount} points`);
           showPointCloudNotice(container, vertexCount);
         }
       } catch (error) {
