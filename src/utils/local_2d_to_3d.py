@@ -102,7 +102,7 @@ except ImportError as e:
 
 
 def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Clean mesh data by removing NaN/inf values and aggressively removing outer shells and table/base structures"""
+    """Clean mesh data by removing NaN/inf values and table/base structures while preserving ring details"""
     
     # Remove NaN and inf values from vertices
     if np.any(np.isnan(vertices)) or np.any(np.isinf(vertices)):
@@ -118,75 +118,70 @@ def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) ->
         faces = faces[valid_faces_mask]
         logging.info(f"Kept {len(faces)} valid faces out of original set")
     
-    # VERY AGGRESSIVE filtering for ring-only structure (remove table/base)
-    if len(vertices) > 500:
-        # Step 1: Remove vertices below ring level (table/base removal)
+    # CONSERVATIVE filtering - only remove obvious table/base, preserve ring details
+    if len(vertices) > 1000:
+        # Step 1: Conservative height-based table removal
         y_coords = vertices[:, 1]  # Y is typically height
-        y_mean = np.mean(y_coords)
-        y_std = np.std(y_coords)
+        y_min, y_max = np.min(y_coords), np.max(y_coords)
+        y_range = y_max - y_min
         
-        # Remove anything significantly below the mean height (likely table/base)
-        height_threshold = y_mean - 0.5 * y_std  # Aggressive height filtering
+        # Only remove vertices in the bottom 15% of height range (conservative table removal)
+        height_threshold = y_min + 0.15 * y_range
         height_mask = y_coords >= height_threshold
         
         vertices_no_table = vertices[height_mask]
         removed_by_height = len(vertices) - len(vertices_no_table)
-        logging.info(f"REMOVED TABLE/BASE: {removed_by_height} vertices below height threshold {height_threshold:.3f}")
         
-        if len(vertices_no_table) == 0:
-            logging.warning("All vertices removed by height filter, using original")
+        if removed_by_height > len(vertices) * 0.5:  # If removing more than 50%, it's too aggressive
+            logging.warning(f"Height filtering too aggressive ({removed_by_height} vertices), using original")
             vertices_no_table = vertices
+            removed_by_height = 0
+        else:
+            logging.info(f"CONSERVATIVE table removal: {removed_by_height} vertices below {height_threshold:.3f}")
         
-        # Step 2: Ring-specific geometric filtering
-        centroid = np.mean(vertices_no_table, axis=0)
-        
-        # Calculate distances from centroid in XZ plane (ignoring Y for ring filtering)
-        xz_distances = np.sqrt((vertices_no_table[:, 0] - centroid[0])**2 + 
-                              (vertices_no_table[:, 2] - centroid[2])**2)
-        
-        # Ring should have consistent radius - remove outliers
-        median_radius = np.median(xz_distances)
-        radius_std = np.std(xz_distances)
-        
-        # Very tight ring radius filtering - remove anything too far from ring structure
-        min_radius = median_radius - 1.5 * radius_std
-        max_radius = median_radius + 1.5 * radius_std
-        
-        ring_mask = (xz_distances >= min_radius) & (xz_distances <= max_radius)
-        
-        final_vertices = vertices_no_table[ring_mask]
-        removed_by_radius = len(vertices_no_table) - len(final_vertices)
-        logging.info(f"RING FILTERING: Kept vertices with radius {min_radius:.3f} to {max_radius:.3f}, removed {removed_by_radius}")
-        
-        # Step 3: Remove extreme outliers using 3D distance
-        if len(final_vertices) > 100:
-            centroid_3d = np.mean(final_vertices, axis=0)
-            distances_3d = np.linalg.norm(final_vertices - centroid_3d, axis=1)
+        # Step 2: Very conservative outlier removal - only remove extreme outliers
+        if len(vertices_no_table) > 500:
+            centroid = np.mean(vertices_no_table, axis=0)
+            distances = np.linalg.norm(vertices_no_table - centroid, axis=1)
             
-            # Ultra-aggressive outlier removal - only keep core ring structure
-            Q1 = np.percentile(distances_3d, 5)   # 5th percentile
-            Q3 = np.percentile(distances_3d, 95)  # 95th percentile
+            # Use much more conservative percentiles
+            Q1 = np.percentile(distances, 2)   # 2nd percentile instead of 5th
+            Q3 = np.percentile(distances, 98)  # 98th percentile instead of 95th
             IQR = Q3 - Q1
             
-            # Extremely tight threshold for pure ring structure
-            outlier_threshold = Q3 + 0.2 * IQR  # Very aggressive
-            inlier_mask = distances_3d <= outlier_threshold
+            # Very conservative threshold - only remove the most extreme outliers
+            outlier_threshold = Q3 + 1.5 * IQR  # Much less aggressive
+            inlier_mask = distances <= outlier_threshold
             
-            vertices = final_vertices[inlier_mask]
-            removed_outliers = len(final_vertices) - len(vertices)
-            logging.info(f"FINAL CLEANUP: Removed {removed_outliers} outlier vertices")
+            vertices = vertices_no_table[inlier_mask]
+            removed_outliers = len(vertices_no_table) - len(vertices)
+            
+            if removed_outliers > len(vertices_no_table) * 0.3:  # If removing more than 30%, too aggressive
+                logging.warning(f"Outlier removal too aggressive ({removed_outliers} vertices), keeping original")
+                vertices = vertices_no_table
+                removed_outliers = 0
+            else:
+                logging.info(f"CONSERVATIVE outlier removal: {removed_outliers} extreme outliers removed")
         else:
-            vertices = final_vertices
+            vertices = vertices_no_table
+            removed_outliers = 0
         
-        # Update faces if they exist
-        if faces is not None and len(vertices) < len(vertices):
-            # This is complex to remap after multiple filtering steps
-            # For now, clear faces to force point cloud rendering with high detail
-            faces = None
-            logging.info("Cleared faces due to complex vertex remapping - will render as high-quality point cloud")
+        total_removed = removed_by_height + removed_outliers
+        total_kept = len(vertices)
+        logging.info(f"FINAL: Kept {total_kept} vertices, removed {total_removed} ({total_removed/(total_kept+total_removed)*100:.1f}%)")
         
-        total_removed = len(vertices) - len(vertices)
-        logging.info(f"TOTAL CLEANING: Original {len(vertices)} -> Final {len(vertices)} vertices ({total_removed} removed)")
+        # Update faces if they exist and we removed vertices
+        if faces is not None and total_removed > 0:
+            # For conservative filtering, try to preserve faces when possible
+            max_vertex_idx = len(vertices) - 1
+            valid_faces_mask = np.all(faces <= max_vertex_idx, axis=1)
+            
+            if np.sum(valid_faces_mask) < len(faces) * 0.5:  # If losing more than 50% of faces
+                logging.warning("Face preservation would lose too many faces, clearing faces for point cloud")
+                faces = None
+            else:
+                faces = faces[valid_faces_mask]
+                logging.info(f"Preserved {len(faces)} faces after vertex filtering")
     
     return vertices, faces
 
