@@ -102,7 +102,7 @@ except ImportError as e:
 
 
 def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Clean mesh data by removing NaN/inf values and aggressively removing outer shells"""
+    """Clean mesh data by removing NaN/inf values and aggressively removing outer shells and table/base structures"""
     
     # Remove NaN and inf values from vertices
     if np.any(np.isnan(vertices)) or np.any(np.isinf(vertices)):
@@ -118,50 +118,75 @@ def clean_mesh_data(vertices: np.ndarray, faces: Optional[np.ndarray] = None) ->
         faces = faces[valid_faces_mask]
         logging.info(f"Kept {len(faces)} valid faces out of original set")
     
-    # AGGRESSIVE outer shell removal for ring structures
-    if len(vertices) > 500:  # Process larger point clouds
-        centroid = np.mean(vertices, axis=0)
-        distances = np.linalg.norm(vertices - centroid, axis=1)
+    # VERY AGGRESSIVE filtering for ring-only structure (remove table/base)
+    if len(vertices) > 500:
+        # Step 1: Remove vertices below ring level (table/base removal)
+        y_coords = vertices[:, 1]  # Y is typically height
+        y_mean = np.mean(y_coords)
+        y_std = np.std(y_coords)
         
-        # Much more aggressive outlier removal for ring structures
-        Q1 = np.percentile(distances, 10)  # Use 10th percentile instead of 25th
-        Q3 = np.percentile(distances, 90)  # Use 90th percentile instead of 75th
-        IQR = Q3 - Q1
+        # Remove anything significantly below the mean height (likely table/base)
+        height_threshold = y_mean - 0.5 * y_std  # Aggressive height filtering
+        height_mask = y_coords >= height_threshold
         
-        # Very aggressive threshold - remove anything beyond Q3 + 0.5*IQR
-        outlier_threshold = Q3 + 0.5 * IQR  # Much more aggressive than 2.5
-        inlier_mask = distances <= outlier_threshold
+        vertices_no_table = vertices[height_mask]
+        removed_by_height = len(vertices) - len(vertices_no_table)
+        logging.info(f"REMOVED TABLE/BASE: {removed_by_height} vertices below height threshold {height_threshold:.3f}")
         
-        # Additional filter: remove vertices that are too far from ring center
-        ring_radius = np.median(distances)  # Estimate ring radius
-        max_ring_distance = ring_radius * 1.3  # Allow 30% variance from median
-        ring_mask = distances <= max_ring_distance
+        if len(vertices_no_table) == 0:
+            logging.warning("All vertices removed by height filter, using original")
+            vertices_no_table = vertices
         
-        # Combine both filters
-        final_mask = inlier_mask & ring_mask
+        # Step 2: Ring-specific geometric filtering
+        centroid = np.mean(vertices_no_table, axis=0)
         
-        removed_count = np.sum(~final_mask)
-        if removed_count > 0:
-            logging.info(f"AGGRESSIVE CLEANING: Removing {removed_count} outlier/shell vertices (kept {np.sum(final_mask)})")
-            vertices = vertices[final_mask]
+        # Calculate distances from centroid in XZ plane (ignoring Y for ring filtering)
+        xz_distances = np.sqrt((vertices_no_table[:, 0] - centroid[0])**2 + 
+                              (vertices_no_table[:, 2] - centroid[2])**2)
+        
+        # Ring should have consistent radius - remove outliers
+        median_radius = np.median(xz_distances)
+        radius_std = np.std(xz_distances)
+        
+        # Very tight ring radius filtering - remove anything too far from ring structure
+        min_radius = median_radius - 1.5 * radius_std
+        max_radius = median_radius + 1.5 * radius_std
+        
+        ring_mask = (xz_distances >= min_radius) & (xz_distances <= max_radius)
+        
+        final_vertices = vertices_no_table[ring_mask]
+        removed_by_radius = len(vertices_no_table) - len(final_vertices)
+        logging.info(f"RING FILTERING: Kept vertices with radius {min_radius:.3f} to {max_radius:.3f}, removed {removed_by_radius}")
+        
+        # Step 3: Remove extreme outliers using 3D distance
+        if len(final_vertices) > 100:
+            centroid_3d = np.mean(final_vertices, axis=0)
+            distances_3d = np.linalg.norm(final_vertices - centroid_3d, axis=1)
             
-            if faces is not None:
-                # Update faces to account for removed vertices
-                vertex_mapping = np.full(len(final_mask), -1)
-                vertex_mapping[final_mask] = np.arange(np.sum(final_mask))
-                
-                # Keep only faces where all vertices are still valid
-                valid_faces = []
-                for face in faces:
-                    mapped_face = vertex_mapping[face]
-                    if np.all(mapped_face >= 0):
-                        valid_faces.append(mapped_face)
-                
-                if valid_faces:
-                    faces = np.array(valid_faces)
-                else:
-                    faces = None
-                    logging.warning("No valid faces remaining after aggressive cleaning")
+            # Ultra-aggressive outlier removal - only keep core ring structure
+            Q1 = np.percentile(distances_3d, 5)   # 5th percentile
+            Q3 = np.percentile(distances_3d, 95)  # 95th percentile
+            IQR = Q3 - Q1
+            
+            # Extremely tight threshold for pure ring structure
+            outlier_threshold = Q3 + 0.2 * IQR  # Very aggressive
+            inlier_mask = distances_3d <= outlier_threshold
+            
+            vertices = final_vertices[inlier_mask]
+            removed_outliers = len(final_vertices) - len(vertices)
+            logging.info(f"FINAL CLEANUP: Removed {removed_outliers} outlier vertices")
+        else:
+            vertices = final_vertices
+        
+        # Update faces if they exist
+        if faces is not None and len(vertices) < len(vertices):
+            # This is complex to remap after multiple filtering steps
+            # For now, clear faces to force point cloud rendering with high detail
+            faces = None
+            logging.info("Cleared faces due to complex vertex remapping - will render as high-quality point cloud")
+        
+        total_removed = len(vertices) - len(vertices)
+        logging.info(f"TOTAL CLEANING: Original {len(vertices)} -> Final {len(vertices)} vertices ({total_removed} removed)")
     
     return vertices, faces
 
@@ -621,12 +646,12 @@ class Local2DTo3DConverter:
                 if progress_callback:
                     progress_callback(30, "Running inference...")
                 
-                # Run the pipeline with optimized settings for better quality
+                # Run the pipeline with optimized settings for high detail
                 start_time = time.time()
                 result = self.pipeline(
                     pipeline_input,
-                    num_inference_steps=30,  # Reduced from 50 for faster inference
-                    guidance_scale=6.0,      # Slightly reduced for more stable results
+                    num_inference_steps=50,  # Increased for better detail
+                    guidance_scale=7.5,      # Higher guidance for better detail adherence
                     return_dict=True
                 )
                 
