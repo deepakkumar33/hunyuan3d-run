@@ -565,13 +565,13 @@ class Local2DTo3DConverter:
         return image_batch
     
     def _generate_3d_mesh(self, image_batch: torch.Tensor, progress_callback=None) -> np.ndarray:
-        """Generate 3D mesh from preprocessed images with progress updates"""
+        """Generate 3D mesh from preprocessed images with progress updates and clean generation"""
         try:
             with torch.no_grad():
-                self.logger.info("🔄 Running Hunyuan3D inference...")
+                self.logger.info("🔄 Running Hunyuan3D inference with clean generation settings...")
                 
                 if progress_callback:
-                    progress_callback(10, "Starting inference...")
+                    progress_callback(10, "Starting clean 3D generation...")
                 
                 # Clear cache before inference
                 if torch.cuda.is_available():
@@ -579,7 +579,7 @@ class Local2DTo3DConverter:
                     memory_before = torch.cuda.memory_allocated(0) / (1024**3)
                     self.logger.info(f"GPU memory before inference: {memory_before:.2f}GB")
                 
-                # Convert torch tensor back to PIL images if needed
+                # Convert torch tensor back to PIL images with better preprocessing
                 pipeline_input = image_batch
                 if isinstance(image_batch, torch.Tensor):
                     try:
@@ -639,22 +639,24 @@ class Local2DTo3DConverter:
                         pipeline_input = image_batch
                 
                 if progress_callback:
-                    progress_callback(30, "Running inference...")
+                    progress_callback(30, "Running high-quality inference...")
                 
-                # Run the pipeline with optimized settings for high detail
+                # Run the pipeline with settings optimized for clean, detailed generation
                 start_time = time.time()
                 result = self.pipeline(
                     pipeline_input,
-                    num_inference_steps=50,  # Increased for better detail
-                    guidance_scale=7.5,      # Higher guidance for better detail adherence
+                    num_inference_steps=60,    # Increased for better quality and fewer artifacts
+                    guidance_scale=8.0,       # Higher guidance for better adherence to input
+                    negative_prompt="table, platform, base, stand, background, surface, floor", # Explicitly avoid unwanted elements
+                    clean_generation=True,    # If supported by the model
                     return_dict=True
                 )
                 
                 inference_time = time.time() - start_time
-                self.logger.info(f"✅ Inference completed in {inference_time:.2f} seconds")
+                self.logger.info(f"✅ High-quality inference completed in {inference_time:.2f} seconds")
                 
                 if progress_callback:
-                    progress_callback(70, "Processing results...")
+                    progress_callback(70, "Processing clean results...")
                 
                 # Clear cache after inference
                 if torch.cuda.is_available():
@@ -786,18 +788,18 @@ class Local2DTo3DConverter:
                 if progress_callback:
                     progress_callback(90, "Cleaning mesh data...")
                 
-                # Clean and validate the point cloud
+                # Clean and validate the point cloud with jewelry-specific filtering
                 if len(point_cloud.shape) == 2 and point_cloud.shape[1] >= 3:
-                    # Ensure we have valid mesh data
-                    vertices, _ = ensure_valid_mesh(point_cloud)
-                    self.logger.info(f"✅ Cleaned point cloud: {len(vertices)} vertices")
+                    # Apply jewelry-specific cleaning that removes tables/bases but preserves details
+                    vertices, _ = self._clean_jewelry_mesh(point_cloud)
+                    self.logger.info(f"✅ Cleaned jewelry mesh: {len(vertices)} vertices")
                 else:
                     raise ValueError(f"Invalid point cloud shape: {point_cloud.shape}")
                 
                 if progress_callback:
                     progress_callback(100, "Complete!")
                 
-                self.logger.info(f"✅ 3D inference completed, final point cloud shape: {vertices.shape}")
+                self.logger.info(f"✅ 3D inference completed, final clean mesh: {vertices.shape}")
                 return vertices
                 
         except Exception as e:
@@ -805,6 +807,89 @@ class Local2DTo3DConverter:
             if progress_callback:
                 progress_callback(-1, f"Error: {str(e)}")
             raise RuntimeError(f"3D generation failed: {e}")
+
+    def _clean_jewelry_mesh(self, vertices: np.ndarray) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """Jewelry-specific mesh cleaning that removes tables/bases while preserving details"""
+        
+        self.logger.info(f"Starting jewelry-specific cleaning on {len(vertices)} vertices")
+        
+        # Step 1: Remove obvious table/base by height analysis
+        y_coords = vertices[:, 1]
+        y_sorted = np.sort(y_coords)
+        
+        # Find the main jewelry cluster by looking for height gaps
+        height_diffs = np.diff(y_sorted)
+        large_gaps = np.where(height_diffs > np.percentile(height_diffs, 95))[0]
+        
+        if len(large_gaps) > 0:
+            # There's a significant height gap - likely between table and jewelry
+            gap_index = large_gaps[0]
+            jewelry_start_height = y_sorted[gap_index + 1]
+            height_mask = y_coords >= jewelry_start_height
+            
+            vertices_no_table = vertices[height_mask]
+            removed_table = len(vertices) - len(vertices_no_table)
+            self.logger.info(f"Removed {removed_table} table vertices below height {jewelry_start_height:.3f}")
+        else:
+            # No obvious gap - use conservative percentile filtering
+            height_threshold = np.percentile(y_coords, 20)  # Remove bottom 20%
+            height_mask = y_coords >= height_threshold
+            vertices_no_table = vertices[height_mask]
+            removed_table = len(vertices) - len(vertices_no_table)
+            self.logger.info(f"Conservative table removal: {removed_table} vertices below {height_threshold:.3f}")
+        
+        if len(vertices_no_table) == 0:
+            self.logger.warning("Table removal too aggressive, keeping original")
+            vertices_no_table = vertices
+        
+        # Step 2: Remove disconnected components (like separate base pieces)
+        # This uses spatial clustering to identify the main jewelry piece
+        from sklearn.cluster import DBSCAN
+        
+        try:
+            # Use DBSCAN to identify connected components
+            clustering = DBSCAN(eps=0.1, min_samples=50).fit(vertices_no_table)
+            labels = clustering.labels_
+            
+            # Find the largest cluster (main jewelry piece)
+            unique_labels, counts = np.unique(labels[labels >= 0], return_counts=True)
+            
+            if len(unique_labels) > 0:
+                main_cluster_label = unique_labels[np.argmax(counts)]
+                main_cluster_mask = labels == main_cluster_label
+                
+                vertices_main = vertices_no_table[main_cluster_mask]
+                removed_components = len(vertices_no_table) - len(vertices_main)
+                
+                if removed_components > 0 and len(vertices_main) > len(vertices_no_table) * 0.3:
+                    self.logger.info(f"Removed {removed_components} vertices from disconnected components")
+                    vertices_no_table = vertices_main
+                else:
+                    self.logger.info("Component clustering too aggressive, keeping all vertices")
+                    
+        except ImportError:
+            self.logger.warning("sklearn not available, skipping component clustering")
+        except Exception as e:
+            self.logger.warning(f"Component clustering failed: {e}")
+        
+        # Step 3: Final outlier removal - very conservative
+        if len(vertices_no_table) > 1000:
+            centroid = np.mean(vertices_no_table, axis=0)
+            distances = np.linalg.norm(vertices_no_table - centroid, axis=1)
+            
+            # Only remove extreme outliers (top 1%)
+            outlier_threshold = np.percentile(distances, 99)
+            inlier_mask = distances <= outlier_threshold
+            
+            final_vertices = vertices_no_table[inlier_mask]
+            removed_outliers = len(vertices_no_table) - len(final_vertices)
+            
+            if removed_outliers > 0:
+                self.logger.info(f"Removed {removed_outliers} extreme outliers")
+                vertices_no_table = final_vertices
+        
+        self.logger.info(f"Final jewelry mesh: {len(vertices_no_table)} vertices")
+        return vertices_no_table, None  # Return None for faces to force point cloud rendering
     
     def _save_mesh_outputs(self, mesh_data: np.ndarray, job_output_dir: str) -> dict:
         """Save mesh in multiple formats and return paths"""
